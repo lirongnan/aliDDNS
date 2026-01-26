@@ -6,17 +6,18 @@
 
 - 调用 Aliyun DNS API 获取/更新解析记录
 - 支持定时轮询更新
+- 支持定时获取解析记录
+- 支持解析记录增删改查
 - 支持从 OpenWrt 接口读取当前 IP
 
 ## 目录结构
 
 ```
-aliDDNS/
-  Makefile
-  files/
-    etc/config/aliddns
-    etc/init.d/aliddns
-    usr/bin/aliddns.sh
+Makefile
+src/
+  etc/config/aliddns
+  etc/init.d/aliddns
+  usr/bin/aliddns.sh
 ```
 
 ## 配置
@@ -28,7 +29,18 @@ aliDDNS/
 - `domain`：主域名，例如 `example.com`
 - `rr`：记录值，例如 `@` 或 `home`
 - `type`：记录类型，例如 `A`
+- `ttl`：记录 TTL，默认 `600`
 - `ip_source`：OpenWrt 接口名，例如 `wan`
+- `interval`：轮询间隔（秒），默认 `300`
+- `log_path`：日志文件路径，默认 `/var/log/aliddns.log`
+- `api_endpoint`：阿里云 DNS API 地址，默认 `https://alidns.aliyuncs.com/`
+- `api_version`：阿里云 DNS API 版本，默认 `2015-01-09`
+- `mode`：服务模式，`sync`（默认）或 `list`
+- `record_id`：用于更新/删除记录时指定 RecordId
+- `value`：用于添加/更新记录的目标值
+- `page_size`：获取记录列表的分页大小，默认 `100`
+- `list_rr`：获取记录列表时的 RR 过滤（可选）
+- `list_type`：获取记录列表时的类型过滤（可选）
 
 示例：
 
@@ -44,6 +56,14 @@ config aliddns 'main'
   option ip_source 'wan'
   option interval '300'
   option log_path '/var/log/aliddns.log'
+  option api_endpoint 'https://alidns.aliyuncs.com/'
+  option api_version '2015-01-09'
+  option mode 'sync'
+  option record_id ''
+  option value ''
+  option page_size '100'
+  option list_rr ''
+  option list_type ''
 ```
 
 ## 使用
@@ -60,6 +80,35 @@ config aliddns 'main'
 ```
 /usr/bin/aliddns.sh --once
 ```
+
+定时获取解析记录（后台服务）：
+
+1. 配置 `/etc/config/aliddns`：
+
+```
+option mode 'list'
+```
+
+2. 启用服务：
+
+```
+/etc/init.d/aliddns enable
+/etc/init.d/aliddns start
+```
+
+解析记录增删改查：
+
+```
+/usr/bin/aliddns.sh --list
+/usr/bin/aliddns.sh --add
+/usr/bin/aliddns.sh --update
+/usr/bin/aliddns.sh --delete
+```
+
+说明：
+
+- `--add`/`--update` 使用 `value` 作为记录值
+- `--update`/`--delete` 优先使用 `record_id`，为空时按 `rr`/`type` 匹配第一条记录
 
 ## 调试
 
@@ -108,4 +157,4 @@ uci show aliddns
 
 ## 构建
 
-将 `aliDDNS` 目录放入 OpenWrt 的 `package/` 下，然后在菜单中选择 `Network -> aliDDNS`。
+将当前目录放入 OpenWrt 的 `package/` 下，然后在菜单中选择 `Network -> aliDDNS`。

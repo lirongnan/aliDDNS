@@ -21,11 +21,11 @@ endef
 
 define Package/aliDDNS/install
 	$(INSTALL_DIR) $(1)/etc/config
-	$(INSTALL_CONF) ./files/etc/config/aliddns $(1)/etc/config/aliddns
+	$(INSTALL_CONF) ./src/etc/config/aliddns $(1)/etc/config/aliddns
 	$(INSTALL_DIR) $(1)/etc/init.d
-	$(INSTALL_BIN) ./files/etc/init.d/aliddns $(1)/etc/init.d/aliddns
+	$(INSTALL_BIN) ./src/etc/init.d/aliddns $(1)/etc/init.d/aliddns
 	$(INSTALL_DIR) $(1)/usr/bin
-	$(INSTALL_BIN) ./files/usr/bin/aliddns.sh $(1)/usr/bin/aliddns.sh
+	$(INSTALL_BIN) ./src/usr/bin/aliddns.sh $(1)/usr/bin/aliddns.sh
 endef
 
 $(eval $(call BuildPackage,aliDDNS))
