@@ -1,0 +1,596 @@
+#!/bin/sh
+
+set -eu
+
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+export PATH
+
+CONFIG=aliddns
+SECTION=main
+API_ENDPOINT_DEFAULT="https://alidns.aliyuncs.com/"
+API_VERSION_DEFAULT="2015-01-09"
+LOG_PATH_DEFAULT="/var/log/aliddns.log"
+API_STATS_FILE="/tmp/aliddns_api_stats"
+
+json_escape() {
+	printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'
+}
+
+respond() {
+	printf 'Content-Type: application/json\r\n\r\n'
+	printf '%s' "$1"
+}
+
+error_response() {
+	local status="$1"
+	local message="$2"
+	log_error "HTTP ${status}: ${message}"
+	printf 'Status: %s\r\n' "$status"
+	printf 'Content-Type: application/json\r\n\r\n'
+	printf '{"error":"%s"}' "$(json_escape "$message")"
+}
+
+get_uci() {
+	uci -q get "${CONFIG}.${SECTION}.$1" 2>/dev/null || true
+}
+
+set_uci() {
+	uci -q set "${CONFIG}.${SECTION}.$1=$2"
+}
+
+get_uci_section() {
+	uci -q get "${CONFIG}.$1.$2" 2>/dev/null || true
+}
+
+set_uci_section() {
+	uci -q set "${CONFIG}.$1.$2=$3"
+}
+
+log_line() {
+	local level="$1"
+	local message="$2"
+	local log_path entry severity
+	log_path=$(get_uci log_path)
+	log_path=${log_path:-$LOG_PATH_DEFAULT}
+	case "$level" in
+		ERROR) severity="err" ;;
+		*) severity="info" ;;
+	esac
+	entry="$(date -u '+%Y-%m-%dT%H:%M:%SZ') [$level] $message"
+	if [ -n "$log_path" ]; then
+		printf '%s\n' "$entry" >> "$log_path" 2>/dev/null \
+			|| logger -t aliddns -p "user.${severity:-info}" "$message" || true
+	else
+		logger -t aliddns -p "user.${severity:-info}" "$message" || true
+	fi
+}
+
+log_info() {
+	log_line "INFO" "$1"
+}
+
+log_error() {
+	log_line "ERROR" "$1"
+}
+
+api_stats_load() {
+	API_STATS_NOW=$(date +%s)
+	API_STATS_START=$API_STATS_NOW
+	API_STATS_COUNT=0
+	if [ -f "$API_STATS_FILE" ]; then
+		read -r API_STATS_START API_STATS_COUNT < "$API_STATS_FILE" || true
+	fi
+	case "$API_STATS_START" in ''|*[!0-9]*) API_STATS_START=$API_STATS_NOW ;; esac
+	case "$API_STATS_COUNT" in ''|*[!0-9]*) API_STATS_COUNT=0 ;; esac
+}
+
+api_stats_save() {
+	printf '%s %s\n' "$API_STATS_START" "$API_STATS_COUNT" > "${API_STATS_FILE}.tmp" \
+		&& mv "${API_STATS_FILE}.tmp" "$API_STATS_FILE"
+}
+
+api_stats_increment() {
+	api_stats_load
+	API_STATS_COUNT=$((API_STATS_COUNT + 1))
+	api_stats_save
+}
+
+api_stats_reset() {
+	API_STATS_START=$(date +%s)
+	API_STATS_COUNT=0
+	api_stats_save
+}
+
+api_stats_response() {
+	api_stats_load
+	local elapsed per_hour
+	elapsed=$((API_STATS_NOW - API_STATS_START))
+	if [ "$elapsed" -le 0 ]; then
+		per_hour="0.00"
+	else
+		per_hour=$(awk -v count="$API_STATS_COUNT" -v elapsed="$elapsed" 'BEGIN { printf "%.2f", (count*3600)/elapsed }')
+	fi
+	respond "{\"count\":${API_STATS_COUNT},\"elapsedSec\":${elapsed},\"perHour\":${per_hour}}"
+}
+
+url_encode() {
+	local input="$1"
+	local output=""
+	local i char hex
+	for i in $(seq 1 ${#input}); do
+		char="$(printf '%s' "$input" | cut -c $i)"
+		case "$char" in
+			[a-zA-Z0-9.~_-])
+				output="$output$char"
+				;;
+		*)
+			hex=$(printf '%02X' "'$char")
+			output="$output%$hex"
+			;;
+		esac
+	done
+	printf '%s' "$output"
+}
+
+url_decode() {
+	local data="${1//+/ }"
+	printf '%b' "${data//%/\\x}"
+}
+
+sign_request() {
+	local canonicalized="$1"
+	printf '%s' "$canonicalized" \
+		| openssl dgst -sha1 -hmac "${ACCESS_KEY_SECRET}&" -binary \
+		| openssl base64
+}
+
+aliyun_request() {
+	local action="$1"
+	shift
+	local timestamp nonce signature signature_encoded query
+
+	api_stats_increment
+	timestamp=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+	nonce=$(cat /proc/sys/kernel/random/uuid)
+
+	local params="AccessKeyId=${ACCESS_KEY_ID}&Action=${action}&Format=JSON&SignatureMethod=HMAC-SHA1&SignatureNonce=${nonce}&SignatureVersion=1.0&Timestamp=${timestamp}&Version=${VERSION}"
+	for param in "$@"; do
+		params="${params}&${param}"
+	done
+
+	local sorted
+	sorted=$(printf '%s' "$params" | tr '&' '\n' | LC_ALL=C sort | tr '\n' '&' | sed 's/&$//')
+
+	local encoded
+	encoded=$(printf '%s\n' "$sorted" | tr '&' '\n' | while IFS='=' read -r key value; do
+		printf '%s=%s&' "$(url_encode "$key")" "$(url_encode "$value")"
+	done | sed 's/&$//')
+
+	local canonicalized="GET&%2F&$(url_encode "$encoded")"
+	signature=$(sign_request "$canonicalized")
+	signature_encoded=$(url_encode "$signature")
+
+	query="${encoded}&Signature=${signature_encoded}"
+	local url="${API_ENDPOINT}?${query}"
+	local response status
+	if ! response=$(curl -sS -w '\n%{http_code}' "$url"); then
+		return 1
+	fi
+	status=$(printf '%s' "$response" | tail -n 1)
+	response=$(printf '%s' "$response" | sed '$d')
+	if [ "$status" != "200" ]; then
+		ALIYUN_STATUS="$status"
+		printf '%s' "$response"
+		return 2
+	fi
+	ALIYUN_STATUS="$status"
+	printf '%s' "$response"
+}
+
+respond_aliyun() {
+	local action="$1"
+	local response status
+	set +e
+	response=$(aliyun_request "$@")
+	status=$?
+	set -e
+	if [ "$status" -eq 0 ]; then
+		respond "$response"
+		return 0
+	fi
+	if [ "$status" -eq 1 ]; then
+		log_error "Aliyun API request failed for ${action}"
+		error_response "502" "Upstream request failed"
+		return 0
+	fi
+	log_error "Aliyun API error ${ALIYUN_STATUS:-500} for ${action}: ${response}"
+	error_response "${ALIYUN_STATUS:-500}" "$response"
+	return 0
+}
+
+load_auth() {
+	ACCESS_KEY_ID=$(get_uci access_key_id)
+	ACCESS_KEY_SECRET=$(get_uci access_key_secret)
+	API_ENDPOINT=$(get_uci api_endpoint || true)
+	VERSION=$(get_uci api_version || true)
+	API_ENDPOINT=${API_ENDPOINT:-$API_ENDPOINT_DEFAULT}
+	VERSION=${VERSION:-$API_VERSION_DEFAULT}
+}
+
+require_auth() {
+	if [ -z "${ACCESS_KEY_ID:-}" ] || [ -z "${ACCESS_KEY_SECRET:-}" ]; then
+		error_response "400" "Missing AccessKey configuration"
+		exit 0
+	fi
+}
+
+get_query_param() {
+	local key="$1"
+	local value
+	value=$(printf '%s' "${QUERY_STRING:-}" | tr '&' '\n' | awk -F= -v k="$key" '$1==k {print $2; exit}')
+	if [ -z "$value" ]; then
+		return 1
+	fi
+	url_decode "$value"
+}
+
+json_field() {
+	local body="$1"
+	local field="$2"
+	jsonfilter -s "$body" -e "@.${field}" 2>/dev/null || true
+}
+
+find_auto_section_by_record_id() {
+	local record_id="$1"
+	local line section value
+	while IFS= read -r line; do
+		case "$line" in
+			${CONFIG}.*.record_id=*)
+				value="${line#*=}"
+				value="${value#\'}"
+				value="${value%\'}"
+				if [ "$value" = "$record_id" ]; then
+					section="${line#${CONFIG}.}"
+					section="${section%%.record_id=*}"
+					printf '%s' "$section"
+					return 0
+				fi
+				;;
+		esac
+	done <<EOF
+$(uci -q show "$CONFIG")
+EOF
+	return 1
+}
+
+list_auto_sections() {
+	uci -q show "$CONFIG" | sed -n "s/^${CONFIG}\\.\\([^=]*\\)=auto$/\\1/p"
+}
+
+get_interface_ip() {
+	local iface="$1"
+	ubus call network.interface."$iface" status 2>/dev/null \
+		| jsonfilter -e '@["ipv4-address"][0].address' 2>/dev/null || true
+}
+
+get_public_ip() {
+	local iface override ip
+	override=$(get_uci ip_override || true)
+	iface=$(get_uci ip_source || true)
+	iface=${iface:-wan}
+	if [ -n "$override" ]; then
+		printf '%s' "$override"
+		return 0
+	fi
+	ip=$(get_interface_ip "$iface" || true)
+	if [ -z "$ip" ]; then
+		return 1
+	fi
+	printf '%s' "$ip"
+}
+
+handle_logs_get() {
+	local tail level log_path output
+	tail=$(get_query_param "tail" || true)
+	level=$(get_query_param "level" || true)
+	case "$tail" in
+		''|*[!0-9]*) tail=200 ;;
+	esac
+	log_path=$(get_uci log_path || true)
+	log_path=${log_path:-$LOG_PATH_DEFAULT}
+	if [ -n "$log_path" ] && [ -f "$log_path" ]; then
+		case "$level" in
+			error|ERROR)
+				output=$(grep -F "[ERROR]" "$log_path" 2>/dev/null | tail -n "$tail" || true)
+				;;
+			info|INFO)
+				output=$(grep -F "[INFO]" "$log_path" 2>/dev/null | tail -n "$tail" || true)
+				;;
+			*)
+				output=$(tail -n "$tail" "$log_path" 2>/dev/null || true)
+				;;
+		esac
+	else
+		output=$(logread -e aliddns 2>/dev/null | tail -n "$tail" || true)
+	fi
+	printf 'Content-Type: text/plain\r\n\r\n'
+	printf '%s' "$output"
+}
+
+handle_api_stats_get() {
+	api_stats_response
+}
+
+handle_api_stats_post() {
+	api_stats_reset
+	log_info "API stats reset"
+	respond '{"ok":true}'
+}
+
+handle_auto_records_get() {
+	local sections output first
+	sections=$(list_auto_sections)
+	output='{"records":['
+	first=1
+	for section in $sections; do
+		local record_id domain rr type ttl
+		record_id=$(get_uci_section "$section" record_id)
+		domain=$(get_uci_section "$section" domain)
+		rr=$(get_uci_section "$section" rr)
+		type=$(get_uci_section "$section" type)
+		ttl=$(get_uci_section "$section" ttl)
+		[ -n "$record_id" ] || continue
+		if [ "$first" -eq 0 ]; then
+			output="${output},"
+		fi
+		first=0
+		output="${output}{\"recordId\":\"$(json_escape "$record_id")\",\"domain\":\"$(json_escape "$domain")\",\"rr\":\"$(json_escape "$rr")\",\"type\":\"$(json_escape "$type")\",\"ttl\":${ttl:-0}}"
+	done
+	output="${output}]}"
+	respond "$output"
+}
+
+handle_auto_records_post() {
+	local body record_id domain rr type ttl section
+	body=$(cat)
+	record_id=$(json_field "$body" "recordId")
+	[ -z "$record_id" ] && record_id=$(json_field "$body" "record_id")
+	domain=$(json_field "$body" "domain")
+	rr=$(json_field "$body" "rr")
+	type=$(json_field "$body" "type")
+	ttl=$(json_field "$body" "ttl")
+	if [ -z "$record_id" ] || [ -z "$domain" ] || [ -z "$rr" ] || [ -z "$type" ]; then
+		error_response "400" "Missing required fields"
+		exit 0
+	fi
+	section=$(find_auto_section_by_record_id "$record_id" || true)
+	if [ -z "$section" ]; then
+		section=$(uci -q add "$CONFIG" auto)
+	fi
+	set_uci_section "$section" record_id "$record_id"
+	set_uci_section "$section" domain "$domain"
+	set_uci_section "$section" rr "$rr"
+	set_uci_section "$section" type "$type"
+	if [ -n "$ttl" ]; then
+		set_uci_section "$section" ttl "$ttl"
+	fi
+	set_uci enabled 1
+	set_uci mode auto
+	uci -q commit "$CONFIG"
+	log_info "Auto record saved: ${record_id} ${rr}.${domain}"
+	respond '{"ok":true}'
+}
+
+handle_auto_record_delete() {
+	local record_id="$1"
+	local section
+	if [ -z "$record_id" ]; then
+		error_response "400" "Missing recordId"
+		exit 0
+	fi
+	section=$(find_auto_section_by_record_id "$record_id" || true)
+	if [ -n "$section" ]; then
+		uci -q delete "${CONFIG}.${section}"
+		uci -q commit "$CONFIG"
+		log_info "Auto record removed: ${record_id}"
+	fi
+	respond '{"ok":true}'
+}
+
+handle_public_ip_get() {
+	local ip iface
+	iface=$(get_uci ip_source || true)
+	iface=${iface:-wan}
+	ip=$(get_public_ip || true)
+	if [ -z "$ip" ]; then
+		log_error "Failed to resolve public IP for ${iface}"
+		error_response "500" "Public IP unavailable"
+		exit 0
+	fi
+	log_info "Public IP resolved (${iface}): ${ip}"
+	respond "{\"ip\":\"$(json_escape "$ip")\",\"source\":\"$(json_escape "$iface")\"}"
+}
+
+handle_settings_get() {
+	local access_key_id access_key_secret interval ttl auto_interval
+	access_key_id=$(get_uci access_key_id)
+	access_key_secret=$(get_uci access_key_secret)
+	interval=$(get_uci interval)
+	auto_interval=$(get_uci auto_interval)
+	ttl=$(get_uci ttl)
+	interval=${interval:-300}
+	auto_interval=${auto_interval:-$interval}
+	ttl=${ttl:-600}
+	log_info "Settings requested"
+	respond "{\"accessKeyId\":\"$(json_escape "$access_key_id")\",\"accessKeySecret\":\"$(json_escape "$access_key_secret")\",\"refreshIntervalSec\":${interval},\"autoSyncIntervalSec\":${auto_interval},\"defaultTtl\":${ttl}}"
+}
+
+handle_settings_post() {
+	local body access_key_id access_key_secret interval ttl auto_interval
+	body=$(cat)
+	access_key_id=$(json_field "$body" "accessKeyId")
+	access_key_secret=$(json_field "$body" "accessKeySecret")
+	interval=$(json_field "$body" "refreshIntervalSec")
+	auto_interval=$(json_field "$body" "autoSyncIntervalSec")
+	ttl=$(json_field "$body" "defaultTtl")
+
+	set_uci access_key_id "$access_key_id"
+	set_uci access_key_secret "$access_key_secret"
+	if [ -n "$interval" ]; then
+		set_uci interval "$interval"
+	fi
+	if [ -n "$auto_interval" ]; then
+		set_uci auto_interval "$auto_interval"
+	fi
+	if [ -n "$ttl" ]; then
+		set_uci ttl "$ttl"
+	fi
+	uci -q commit "$CONFIG"
+	log_info "Settings updated"
+	respond '{"ok":true}'
+}
+
+handle_domains_get() {
+	load_auth
+	require_auth
+	log_info "Domains list requested"
+	respond_aliyun "DescribeDomains" "PageSize=100"
+}
+
+handle_records_get() {
+	local domain
+	domain=$(get_query_param "domain" || true)
+	if [ -z "$domain" ]; then
+		error_response "400" "Missing domain"
+		exit 0
+	fi
+	load_auth
+	require_auth
+	log_info "Records list requested for ${domain}"
+	respond_aliyun "DescribeDomainRecords" "DomainName=${domain}" "PageSize=100"
+}
+
+handle_records_post() {
+	local body domain rr type value ttl
+	body=$(cat)
+	domain=$(json_field "$body" "domain")
+	rr=$(json_field "$body" "rr")
+	type=$(json_field "$body" "type")
+	value=$(json_field "$body" "value")
+	ttl=$(json_field "$body" "ttl")
+	if [ -z "$domain" ] || [ -z "$rr" ] || [ -z "$type" ] || [ -z "$value" ]; then
+		error_response "400" "Missing required fields"
+		exit 0
+	fi
+	ttl=${ttl:-$(get_uci ttl)}
+	ttl=${ttl:-600}
+	load_auth
+	require_auth
+	log_info "Add record request: ${rr}.${domain} ${type} ${value}"
+	respond_aliyun "AddDomainRecord" "DomainName=${domain}" "RR=${rr}" "Type=${type}" "Value=${value}" "TTL=${ttl}"
+}
+
+handle_record_put() {
+	local record_id="$1"
+	local body rr type value ttl
+	body=$(cat)
+	rr=$(json_field "$body" "rr")
+	type=$(json_field "$body" "type")
+	value=$(json_field "$body" "value")
+	ttl=$(json_field "$body" "ttl")
+	if [ -z "$record_id" ] || [ -z "$rr" ] || [ -z "$type" ] || [ -z "$value" ]; then
+		error_response "400" "Missing required fields"
+		exit 0
+	fi
+	ttl=${ttl:-$(get_uci ttl)}
+	ttl=${ttl:-600}
+	load_auth
+	require_auth
+	log_info "Update record request: ${record_id} ${rr} ${type} ${value}"
+	respond_aliyun "UpdateDomainRecord" "RecordId=${record_id}" "RR=${rr}" "Type=${type}" "Value=${value}" "TTL=${ttl}"
+}
+
+handle_record_delete() {
+	local record_id="$1"
+	if [ -z "$record_id" ]; then
+		error_response "400" "Missing recordId"
+		exit 0
+	fi
+	load_auth
+	require_auth
+	log_info "Delete record request: ${record_id}"
+	respond_aliyun "DeleteDomainRecord" "RecordId=${record_id}"
+}
+
+PATH_INFO=${PATH_INFO:-/}
+REQUEST_METHOD=${REQUEST_METHOD:-GET}
+
+case "$PATH_INFO" in
+	/|/settings)
+		case "$REQUEST_METHOD" in
+			GET) handle_settings_get ;;
+			POST) handle_settings_post ;;
+			*) error_response "405" "Method not allowed" ;;
+		esac
+		;;
+	/domains)
+		if [ "$REQUEST_METHOD" = "GET" ]; then
+			handle_domains_get
+		else
+			error_response "405" "Method not allowed"
+		fi
+		;;
+	/public-ip)
+		if [ "$REQUEST_METHOD" = "GET" ]; then
+			handle_public_ip_get
+		else
+			error_response "405" "Method not allowed"
+		fi
+		;;
+	/records)
+		case "$REQUEST_METHOD" in
+			GET) handle_records_get ;;
+			POST) handle_records_post ;;
+			*) error_response "405" "Method not allowed" ;;
+		esac
+		;;
+	/records/*)
+		record_id="${PATH_INFO#/records/}"
+		case "$REQUEST_METHOD" in
+			PUT) handle_record_put "$record_id" ;;
+			DELETE) handle_record_delete "$record_id" ;;
+			*) error_response "405" "Method not allowed" ;;
+		esac
+		;;
+	/logs)
+		if [ "$REQUEST_METHOD" = "GET" ]; then
+			handle_logs_get
+		else
+			error_response "405" "Method not allowed"
+		fi
+		;;
+	/api-stats)
+		case "$REQUEST_METHOD" in
+			GET) handle_api_stats_get ;;
+			POST) handle_api_stats_post ;;
+			*) error_response "405" "Method not allowed" ;;
+		esac
+		;;
+	/auto-records)
+		case "$REQUEST_METHOD" in
+			GET) handle_auto_records_get ;;
+			POST) handle_auto_records_post ;;
+			*) error_response "405" "Method not allowed" ;;
+		esac
+		;;
+	/auto-records/*)
+		record_id="${PATH_INFO#/auto-records/}"
+		case "$REQUEST_METHOD" in
+			DELETE) handle_auto_record_delete "$record_id" ;;
+			*) error_response "405" "Method not allowed" ;;
+		esac
+		;;
+	*)
+		error_response "404" "Not found"
+		;;
+esac

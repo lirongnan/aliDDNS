@@ -1,0 +1,26 @@
+{
+  "enabled": true,
+  "refreshIntervalSec": 60,
+  "domains": ["alpha.example", "bravo.example", "charlie.example"],
+  "trackedDomains": ["alpha.example", "bravo.example"],
+  "seedRecords": [
+    {
+      "RecordId": "mock-1",
+      "RR": "home",
+      "Type": "A",
+      "Value": "1.2.3.4",
+      "TTL": 600,
+      "Status": "ENABLE",
+      "UpdateTimestamp": 0
+    },
+    {
+      "RecordId": "mock-2",
+      "RR": "api",
+      "Type": "CNAME",
+      "Value": "service.example.net",
+      "TTL": 600,
+      "Status": "ENABLE",
+      "UpdateTimestamp": 0
+    }
+  ]
+}

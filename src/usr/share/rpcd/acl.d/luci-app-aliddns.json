@@ -1,0 +1,15 @@
+{
+  "luci-app-aliddns": {
+    "description": "Grant access to AliDDNS LuCI app",
+    "read": {
+      "uci": [
+        "aliddns"
+      ]
+    },
+    "write": {
+      "uci": [
+        "aliddns"
+      ]
+    }
+  }
+}

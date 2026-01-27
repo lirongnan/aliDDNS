@@ -1,36 +1,35 @@
-Mock scripts live here.
+UI Mock Config
 
-Files:
-- mock.template.sh: executable template; copy to mock.local.sh and fill values.
-- mock.local.sh: your local runner (gitignored).
-- uci/ubus/jsonfilter: minimal local stubs used by aliddns.sh (curl is real).
+Overview
+- Place a local config at `mock/mock.config.json` to enable UI mock mode.
+- This file is ignored by git and should not be committed.
 
-Quick start:
-1) Copy template to local runner:
-   cp ./mock/mock.template.sh ./mock/mock.local.sh
-2) Edit ./mock/mock.local.sh and fill the config values (LOG_PATH defaults to /dev/stderr).
-   Optional: API_ENDPOINT and API_VERSION can be set if Aliyun returns InvalidVersion.
-   Optional: COMMAND selects which operation to run (e.g. --list/--add/--update/--delete/--daemon).
-3) Run:
-   ./mock/mock.local.sh
+Setup
+1) Copy the template:
+   cp mock/mock.config.template.json mock/mock.config.json
+2) Edit `mock/mock.config.json` with your domains and seed records.
+3) Reload the UI page.
 
-Examples:
-- List records:
-  COMMAND="--list"
-- Add record:
-  VALUE="1.2.3.4"
-  COMMAND="--add"
-- Update record:
-  RECORD_ID="123456"
-  VALUE="1.2.3.4"
-  COMMAND="--update"
-- Delete record:
-  RECORD_ID="123456"
-  COMMAND="--delete"
-- Periodic list:
-  MODE="list"
-  COMMAND="--daemon"
+Supported fields
+- `enabled` (boolean): set to true to enable mock mode.
+- `domains` (string[]): available domain list for the Add Domain modal.
+- `trackedDomains` (string[]): domains that should be shown immediately.
+- `seedRecords` (array): initial records added to each tracked domain (only if empty).
+- `refreshIntervalSec` (number, optional): UI auto refresh interval in seconds.
 
-Notes:
-- This setup is for local dev only.
-- Extend the mock scripts as needed.
+Example
+{
+  "enabled": true,
+  "refreshIntervalSec": 60,
+  "domains": ["alpha.example", "bravo.example", "charlie.example"],
+  "trackedDomains": ["alpha.example"],
+  "seedRecords": [
+    { "rr": "home", "type": "A", "value": "1.2.3.4", "ttl": 600, "status": "ENABLE" },
+    { "rr": "api", "type": "CNAME", "value": "service.example.net", "ttl": 600, "status": "ENABLE" }
+  ]
+}
+
+Notes
+- When `enabled: true`, the UI uses localStorage and does not call the backend API.
+- `trackedDomains` renders grouped lists immediately.
+- API/hour stats are stored locally in localStorage for mock mode; double‑click the number to reset.
