@@ -1,0 +1,434 @@
+#!/bin/sh
+
+set -eu
+
+CONFIG=aliddns
+CONFIG_SECTION=main
+API_ENDPOINT="https://alidns.aliyuncs.com/"
+VERSION="2015-01-09"
+API_STATS_FILE="/tmp/aliddns_api_stats"
+
+log_line() {
+	local level="$1"
+	local message="$2"
+	local entry severity
+	entry="$(date -u '+%Y-%m-%dT%H:%M:%SZ') [$level] $message"
+	if [ -n "${LOG_PATH:-}" ]; then
+		printf '%s\n' "$entry" >> "$LOG_PATH"
+	else
+		case "$level" in
+			ERROR) severity="err" ;;
+			*) severity="info" ;;
+		esac
+		logger -t aliddns -p "user.${severity}" "$message"
+	fi
+}
+
+log_info() {
+	log_line "INFO" "$1"
+}
+
+log_error() {
+	log_line "ERROR" "$1"
+}
+
+api_stats_load() {
+	API_STATS_NOW=$(date +%s)
+	API_STATS_START=$API_STATS_NOW
+	API_STATS_COUNT=0
+	if [ -f "$API_STATS_FILE" ]; then
+		read -r API_STATS_START API_STATS_COUNT < "$API_STATS_FILE" || true
+	fi
+	case "$API_STATS_START" in ''|*[!0-9]*) API_STATS_START=$API_STATS_NOW ;; esac
+	case "$API_STATS_COUNT" in ''|*[!0-9]*) API_STATS_COUNT=0 ;; esac
+}
+
+api_stats_save() {
+	printf '%s %s\n' "$API_STATS_START" "$API_STATS_COUNT" > "${API_STATS_FILE}.tmp" \
+		&& mv "${API_STATS_FILE}.tmp" "$API_STATS_FILE"
+}
+
+api_stats_increment() {
+	api_stats_load
+	API_STATS_COUNT=$((API_STATS_COUNT + 1))
+	api_stats_save
+}
+
+load_config() {
+	ENABLED=$(uci -q get ${CONFIG}.${CONFIG_SECTION}.enabled || echo 0)
+	ACCESS_KEY_ID=$(uci -q get ${CONFIG}.${CONFIG_SECTION}.access_key_id || echo "")
+	ACCESS_KEY_SECRET=$(uci -q get ${CONFIG}.${CONFIG_SECTION}.access_key_secret || echo "")
+	DOMAIN=$(uci -q get ${CONFIG}.${CONFIG_SECTION}.domain || echo "")
+	RR=$(uci -q get ${CONFIG}.${CONFIG_SECTION}.rr || echo "@")
+	TYPE=$(uci -q get ${CONFIG}.${CONFIG_SECTION}.type || echo "A")
+	TTL=$(uci -q get ${CONFIG}.${CONFIG_SECTION}.ttl || echo "600")
+	IP_SOURCE=$(uci -q get ${CONFIG}.${CONFIG_SECTION}.ip_source || echo "wan")
+	IP_OVERRIDE=$(uci -q get ${CONFIG}.${CONFIG_SECTION}.ip_override || echo "")
+	INTERVAL=$(uci -q get ${CONFIG}.${CONFIG_SECTION}.interval || echo "300")
+	AUTO_INTERVAL=$(uci -q get ${CONFIG}.${CONFIG_SECTION}.auto_interval || echo "")
+	LOG_PATH=$(uci -q get ${CONFIG}.${CONFIG_SECTION}.log_path || echo "")
+	API_ENDPOINT=$(uci -q get ${CONFIG}.${CONFIG_SECTION}.api_endpoint || echo "$API_ENDPOINT")
+	VERSION=$(uci -q get ${CONFIG}.${CONFIG_SECTION}.api_version || echo "$VERSION")
+	MODE=$(uci -q get ${CONFIG}.${CONFIG_SECTION}.mode || echo "sync")
+	RECORD_ID=$(uci -q get ${CONFIG}.${CONFIG_SECTION}.record_id || echo "")
+	VALUE=$(uci -q get ${CONFIG}.${CONFIG_SECTION}.value || echo "")
+	PAGE_SIZE=$(uci -q get ${CONFIG}.${CONFIG_SECTION}.page_size || echo "100")
+	LIST_RR=$(uci -q get ${CONFIG}.${CONFIG_SECTION}.list_rr || echo "")
+	LIST_TYPE=$(uci -q get ${CONFIG}.${CONFIG_SECTION}.list_type || echo "")
+	AUTO_INTERVAL=${AUTO_INTERVAL:-$INTERVAL}
+}
+
+require_auth() {
+	if [ -z "$ACCESS_KEY_ID" ] || [ -z "$ACCESS_KEY_SECRET" ] || [ -z "$DOMAIN" ]; then
+		log_error "Missing required configuration: access_key_id, access_key_secret, domain."
+		return 1
+	fi
+}
+
+require_credentials() {
+	if [ -z "$ACCESS_KEY_ID" ] || [ -z "$ACCESS_KEY_SECRET" ]; then
+		log_error "Missing required configuration: access_key_id, access_key_secret."
+		return 1
+	fi
+}
+
+require_value() {
+	if [ -z "$VALUE" ]; then
+		log_error "Missing required configuration: value."
+		return 1
+	fi
+}
+
+url_encode() {
+	local input="$1"
+	local output=""
+	local i char hex
+	for i in $(seq 1 ${#input}); do
+		char="$(printf '%s' "$input" | cut -c $i)"
+		case "$char" in
+			[a-zA-Z0-9.~_-])
+				output="$output$char"
+				;;
+		*)
+			hex=$(printf '%02X' "'$char")
+			output="$output%$hex"
+			;;
+	esac
+	done
+	printf '%s' "$output"
+}
+
+sign_request() {
+	local canonicalized="$1"
+	printf '%s' "$canonicalized" \
+		| openssl dgst -sha1 -hmac "${ACCESS_KEY_SECRET}&" -binary \
+		| openssl base64
+}
+
+aliyun_request() {
+	local action="$1"
+	shift
+	local timestamp nonce signature signature_encoded query
+
+	api_stats_increment
+	timestamp=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+	nonce=$(cat /proc/sys/kernel/random/uuid)
+
+	local params="AccessKeyId=${ACCESS_KEY_ID}&Action=${action}&Format=JSON&SignatureMethod=HMAC-SHA1&SignatureNonce=${nonce}&SignatureVersion=1.0&Timestamp=${timestamp}&Version=${VERSION}"
+	for param in "$@"; do
+		params="${params}&${param}"
+	done
+
+	local sorted
+	sorted=$(printf '%s' "$params" | tr '&' '\n' | LC_ALL=C sort | tr '\n' '&' | sed 's/&$//')
+
+	local encoded
+	encoded=$(printf '%s\n' "$sorted" | tr '&' '\n' | while IFS='=' read -r key value; do
+		printf '%s=%s&' "$(url_encode "$key")" "$(url_encode "$value")"
+	done | sed 's/&$//')
+
+	local canonicalized="GET&%2F&$(url_encode "$encoded")"
+	signature=$(sign_request "$canonicalized")
+	signature_encoded=$(url_encode "$signature")
+
+	query="${encoded}&Signature=${signature_encoded}"
+	local url="${API_ENDPOINT}?${query}"
+	local response status
+	log_info "Aliyun API request: ${url}"
+	if ! response=$(curl -sS -w '\n%{http_code}' "$url"); then
+		log_error "Aliyun API request failed: curl error"
+		return 1
+	fi
+	status=$(printf '%s' "$response" | tail -n 1)
+	response=$(printf '%s' "$response" | sed '$d')
+	if [ "$status" != "200" ]; then
+		log_error "Aliyun API error ${status}: ${response}"
+		return 1
+	fi
+	printf '%s' "$response"
+}
+
+get_interface_ip() {
+	local iface="$1"
+	ubus call network.interface."$iface" status 2>/dev/null \
+		| jsonfilter -e '@["ipv4-address"][0].address'
+}
+
+get_current_ip() {
+	if [ -n "$IP_OVERRIDE" ]; then
+		printf '%s' "$IP_OVERRIDE"
+		return
+	fi
+
+	local ip
+	ip=$(get_interface_ip "$IP_SOURCE" || true)
+	if [ -z "$ip" ]; then
+		log_error "Failed to get IP from interface ${IP_SOURCE}"
+		return 1
+	fi
+	printf '%s' "$ip"
+}
+
+get_record_info() {
+	local response record_id record_value
+	response=$(aliyun_request "DescribeDomainRecords" "DomainName=${DOMAIN}" "RRKeyWord=${RR}" "TypeKeyWord=${TYPE}")
+	record_id=$(printf '%s' "$response" | jsonfilter -e '@.DomainRecords.Record[0].RecordId' 2>/dev/null || true)
+	record_value=$(printf '%s' "$response" | jsonfilter -e '@.DomainRecords.Record[0].Value' 2>/dev/null || true)
+	if [ -z "$record_id" ] && printf '%s' "$response" | grep -q '"Code"'; then
+		log_error "Aliyun API response error: ${response}"
+		return 1
+	fi
+	printf '%s|%s' "$record_id" "$record_value"
+}
+
+list_records() {
+	local response
+	set -- "DomainName=${DOMAIN}" "PageSize=${PAGE_SIZE}"
+	if [ -n "$LIST_RR" ]; then
+		set -- "$@" "RRKeyWord=${LIST_RR}"
+	fi
+	if [ -n "$LIST_TYPE" ]; then
+		set -- "$@" "TypeKeyWord=${LIST_TYPE}"
+	fi
+	response=$(aliyun_request "DescribeDomainRecords" "$@")
+	printf '%s' "$response"
+}
+
+describe_record_info() {
+	local record_id="$1"
+	local response
+	response=$(aliyun_request "DescribeDomainRecordInfo" "RecordId=${record_id}")
+	printf '%s' "$response"
+}
+
+resolve_record_id() {
+	if [ -n "$RECORD_ID" ]; then
+		printf '%s' "$RECORD_ID"
+		return 0
+	fi
+
+	local record_info record_id
+	record_info=$(get_record_info) || return 1
+	record_id="${record_info%%|*}"
+	if [ -z "$record_id" ]; then
+		log_info "No existing record found for ${RR}.${DOMAIN} (${TYPE})"
+		return 1
+	fi
+	printf '%s' "$record_id"
+}
+
+update_record() {
+	local record_id="$1"
+	local value="$2"
+	aliyun_request "UpdateDomainRecord" "RecordId=${record_id}" "RR=${RR}" "Type=${TYPE}" "Value=${value}" "TTL=${TTL}" >/dev/null
+}
+
+add_record() {
+	local value="$1"
+	aliyun_request "AddDomainRecord" "DomainName=${DOMAIN}" "RR=${RR}" "Type=${TYPE}" "Value=${value}" "TTL=${TTL}" >/dev/null
+}
+
+delete_record() {
+	local record_id="$1"
+	aliyun_request "DeleteDomainRecord" "RecordId=${record_id}" >/dev/null
+}
+
+run_sync() {
+	if [ "$ENABLED" != "1" ]; then
+		log_info "Service disabled. Set ${CONFIG}.${CONFIG_SECTION}.enabled=1 to enable."
+		return 0
+	fi
+	require_auth || return 1
+
+	local ip record_info record_id record_value
+	ip=$(get_current_ip) || return 1
+	record_info=$(get_record_info)
+	record_id="${record_info%%|*}"
+	record_value="${record_info##*|}"
+
+	if [ -z "$record_id" ]; then
+		log_info "No existing record found, creating new record for ${RR}.${DOMAIN} -> ${ip}"
+		add_record "$ip"
+		return 0
+	fi
+
+	if [ "$record_value" = "$ip" ]; then
+		log_info "Record ${RR}.${DOMAIN} already up to date (${ip})"
+		return 0
+	fi
+
+	log_info "Updating record ${RR}.${DOMAIN} from ${record_value} to ${ip}"
+	update_record "$record_id" "$ip"
+}
+
+run_list_daemon() {
+	if [ "$ENABLED" != "1" ]; then
+		log_info "Service disabled. Set ${CONFIG}.${CONFIG_SECTION}.enabled=1 to enable."
+		return 0
+	fi
+	require_auth || return 1
+
+	local response
+	response=$(list_records) || return 1
+	log_info "Fetched records: ${response}"
+}
+
+run_add() {
+	require_auth || return 1
+	require_value || return 1
+
+	log_info "Adding record ${RR}.${DOMAIN} -> ${VALUE}"
+	add_record "$VALUE"
+}
+
+run_update() {
+	require_auth || return 1
+	require_value || return 1
+
+	local record_id
+	record_id=$(resolve_record_id) || return 1
+	log_info "Updating record ${RR}.${DOMAIN} (${record_id}) -> ${VALUE}"
+	update_record "$record_id" "$VALUE"
+}
+
+run_delete() {
+	require_auth || return 1
+
+	local record_id
+	record_id=$(resolve_record_id) || return 1
+	log_info "Deleting record ${RR}.${DOMAIN} (${record_id})"
+	delete_record "$record_id"
+}
+
+run_auto() {
+	if [ "$ENABLED" != "1" ]; then
+		log_info "Service disabled. Set ${CONFIG}.${CONFIG_SECTION}.enabled=1 to enable."
+		return 0
+	fi
+	require_credentials || return 1
+
+	local ip sections section record_id domain rr type ttl response remote_value remote_rr remote_type remote_ttl
+	ip=$(get_current_ip) || return 1
+	sections=$(uci -q show ${CONFIG} | sed -n "s/^${CONFIG}\\.\\([^=]*\\)=auto$/\\1/p")
+	if [ -z "$sections" ]; then
+		log_info "No auto records configured."
+		return 0
+	fi
+	for section in $sections; do
+		record_id=$(uci -q get ${CONFIG}.${section}.record_id || echo "")
+		domain=$(uci -q get ${CONFIG}.${section}.domain || echo "")
+		rr=$(uci -q get ${CONFIG}.${section}.rr || echo "")
+		type=$(uci -q get ${CONFIG}.${section}.type || echo "")
+		ttl=$(uci -q get ${CONFIG}.${section}.ttl || echo "")
+		if [ -z "$record_id" ]; then
+			log_error "Auto record missing record_id in ${section}"
+			continue
+		fi
+		response=$(describe_record_info "$record_id") || {
+			log_error "Failed to fetch record info for ${record_id}"
+			continue
+		}
+		remote_value=$(printf '%s' "$response" | jsonfilter -e '@.Value' 2>/dev/null || true)
+		remote_rr=$(printf '%s' "$response" | jsonfilter -e '@.RR' 2>/dev/null || true)
+		remote_type=$(printf '%s' "$response" | jsonfilter -e '@.Type' 2>/dev/null || true)
+		remote_ttl=$(printf '%s' "$response" | jsonfilter -e '@.TTL' 2>/dev/null || true)
+		[ -n "$remote_rr" ] && rr="$remote_rr"
+		[ -n "$remote_type" ] && type="$remote_type"
+		[ -n "$remote_ttl" ] && ttl="$remote_ttl"
+		ttl=${ttl:-$TTL}
+		if [ -z "$remote_value" ]; then
+			log_error "Auto record ${record_id} missing remote value"
+			continue
+		fi
+		if [ "$remote_value" = "$ip" ]; then
+			log_info "Auto record ${rr}.${domain} already up to date (${ip})"
+			continue
+		fi
+		log_info "Auto updating ${rr}.${domain} (${record_id}) from ${remote_value} to ${ip}"
+		aliyun_request "UpdateDomainRecord" "RecordId=${record_id}" "RR=${rr}" "Type=${type}" "Value=${ip}" "TTL=${ttl}" >/dev/null || {
+			log_error "Auto update failed for ${rr}.${domain} (${record_id})"
+		}
+	done
+}
+
+run_once() {
+	load_config
+	run_sync
+}
+
+run_daemon() {
+	while true; do
+		load_config
+		case "${MODE:-sync}" in
+			list)
+				run_list_daemon || true
+				;;
+			auto)
+				run_auto || true
+				;;
+			sync|update|"")
+				run_sync || true
+				;;
+			*)
+				log_error "Unknown mode: ${MODE}"
+				;;
+		esac
+		if [ "${MODE:-sync}" = "auto" ]; then
+			sleep "$AUTO_INTERVAL"
+		else
+			sleep "$INTERVAL"
+		fi
+	done
+}
+
+case "${1:-}" in
+	--daemon)
+		run_daemon
+		;;
+	--once|"" )
+		run_once
+		;;
+	--list)
+		load_config
+		require_auth || exit 1
+		list_records
+		printf '\n'
+		;;
+	--add)
+		load_config
+		run_add
+		;;
+	--update)
+		load_config
+		run_update
+		;;
+	--delete)
+		load_config
+		run_delete
+		;;
+	*)
+		echo "Usage: $0 [--once|--daemon|--list|--add|--update|--delete]" >&2
+		exit 1
+		;;
+
+esac

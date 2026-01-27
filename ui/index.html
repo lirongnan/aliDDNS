@@ -1,0 +1,1810 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>AliDDNS Console</title>
+    <meta name="color-scheme" content="light" />
+    <style>
+      :root {
+        --bg: #f7efe5;
+        --bg-deep: #eadbc6;
+        --ink: #1c1c18;
+        --muted: #5f5a50;
+        --accent: #0f766e;
+        --accent-2: #ef6a4c;
+        --accent-3: #f1b43b;
+        --card: #fffaf4;
+        --border: rgba(15, 118, 110, 0.16);
+        --shadow: 0 24px 60px rgba(15, 118, 110, 0.18);
+        --danger: #c0392b;
+        --success: #14804a;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        font-family: "Avenir Next", "Avenir", "Futura", "Trebuchet MS", sans-serif;
+        color: var(--ink);
+        background: radial-gradient(circle at 10% 20%, #ffe9d5, transparent 40%),
+          radial-gradient(circle at 85% 15%, #d6f5f1, transparent 45%),
+          linear-gradient(120deg, var(--bg), var(--bg-deep));
+        min-height: 100vh;
+        overflow-x: hidden;
+      }
+
+      body::after {
+        content: "";
+        position: fixed;
+        inset: 0;
+        background-image: linear-gradient(transparent 97%, rgba(0, 0, 0, 0.03) 100%),
+          linear-gradient(90deg, transparent 97%, rgba(0, 0, 0, 0.03) 100%);
+        background-size: 28px 28px;
+        pointer-events: none;
+        mix-blend-mode: multiply;
+      }
+
+      .orb {
+        position: fixed;
+        width: 420px;
+        height: 420px;
+        border-radius: 50%;
+        background: radial-gradient(circle at 30% 30%, #fbd38d, #f6ad55, transparent 70%);
+        filter: blur(40px);
+        top: -120px;
+        right: -120px;
+        opacity: 0.55;
+        pointer-events: none;
+      }
+
+      .shell {
+        max-width: 1200px;
+        margin: 0 auto;
+        padding: 32px 24px 60px;
+        position: relative;
+        z-index: 1;
+      }
+
+      header {
+        display: none;
+      }
+
+      .title-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        gap: 20px;
+        flex-wrap: wrap;
+      }
+
+      .title-row h1 {
+        font-family: "Iowan Old Style", "Palatino Linotype", "Book Antiqua", "Times New Roman", serif;
+        font-size: clamp(1.6rem, 2.6vw, 2.4rem);
+        margin: 0 0 6px;
+      }
+
+      .subtitle {
+        margin: 0;
+        color: var(--muted);
+        max-width: 520px;
+      }
+
+      .summary {
+        display: flex;
+        gap: 16px;
+        align-items: center;
+        flex-wrap: wrap;
+      }
+
+      .summary-item {
+        padding: 10px 14px;
+        border-radius: 14px;
+        background: rgba(15, 118, 110, 0.08);
+        min-width: 140px;
+      }
+
+      .summary-item span {
+        display: block;
+        font-size: 0.75rem;
+        color: var(--muted);
+      }
+
+      .summary-item strong {
+        font-size: 1rem;
+      }
+
+      .summary-item .resettable {
+        cursor: pointer;
+        user-select: none;
+      }
+
+      .summary-item .resettable:hover {
+        text-decoration: underline;
+      }
+
+      .button {
+        border: none;
+        border-radius: 12px;
+        padding: 10px 16px;
+        font-weight: 600;
+        cursor: pointer;
+        transition: transform 0.2s ease, box-shadow 0.2s ease;
+        background: var(--accent);
+        color: #fff;
+        box-shadow: 0 12px 24px rgba(15, 118, 110, 0.2);
+      }
+
+      .button.secondary {
+        background: #fff;
+        color: var(--ink);
+        border: 1px solid var(--border);
+        box-shadow: none;
+      }
+
+      .button.danger {
+        background: var(--danger);
+        box-shadow: 0 12px 24px rgba(192, 57, 43, 0.2);
+      }
+
+      .button:disabled {
+        opacity: 0.6;
+        cursor: not-allowed;
+        transform: none;
+      }
+
+      .panel-grid {
+        display: block;
+        margin-top: 28px;
+      }
+
+      .panel {
+        background: var(--card);
+        border-radius: 24px;
+        padding: 24px;
+        border: 1px solid rgba(0, 0, 0, 0.05);
+        box-shadow: var(--shadow);
+      }
+
+      .panel h2 {
+        margin: 0 0 16px;
+        font-size: 1.2rem;
+      }
+
+      .stats,
+      .stat {
+        display: none;
+      }
+
+      .field {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        margin-bottom: 0;
+      }
+
+      .field label {
+        font-size: 0.85rem;
+        color: var(--muted);
+      }
+
+      .field input,
+      .field select {
+        padding: 10px 12px;
+        border-radius: 12px;
+        border: 1px solid var(--border);
+        background: #fff;
+        font-family: inherit;
+      }
+
+      .toolbar {
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+        margin-bottom: 20px;
+      }
+
+      .domain-list {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+
+      .domain-pill {
+        padding: 6px 12px;
+        border-radius: 999px;
+        background: rgba(15, 118, 110, 0.1);
+        color: var(--accent);
+        font-size: 0.8rem;
+        font-weight: 600;
+      }
+
+      .domain-pill.active {
+        background: rgba(15, 118, 110, 0.25);
+      }
+
+      .toolbar-row {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 12px;
+        align-items: end;
+      }
+
+      .toolbar-actions {
+        display: flex;
+        gap: 10px;
+        justify-content: flex-end;
+      }
+
+      .toggle {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 6px 10px;
+        border-radius: 999px;
+        border: 1px solid var(--border);
+        background: #fff;
+        color: var(--muted);
+        font-size: 0.8rem;
+        font-weight: 600;
+        cursor: pointer;
+      }
+
+      .toggle input {
+        display: none;
+      }
+
+      .toggle-slider {
+        position: relative;
+        width: 36px;
+        height: 20px;
+        border-radius: 999px;
+        background: rgba(15, 118, 110, 0.18);
+        transition: background 0.2s ease;
+      }
+
+      .toggle-slider::after {
+        content: "";
+        position: absolute;
+        top: 2px;
+        left: 2px;
+        width: 16px;
+        height: 16px;
+        border-radius: 50%;
+        background: #fff;
+        box-shadow: 0 2px 6px rgba(0, 0, 0, 0.16);
+        transition: transform 0.2s ease;
+      }
+
+      .toggle input:checked + .toggle-slider {
+        background: var(--accent);
+      }
+
+      .toggle input:checked + .toggle-slider::after {
+        transform: translateX(16px);
+      }
+
+      .table-wrap {
+        width: 100%;
+        overflow-x: auto;
+      }
+
+      .domain-group {
+        margin-top: 18px;
+        border-radius: 18px;
+        border: 1px solid rgba(0, 0, 0, 0.08);
+        background: #fffdf9;
+        padding: 16px;
+      }
+
+      .domain-group:first-child {
+        margin-top: 0;
+      }
+
+      .log-panel {
+        margin-top: 20px;
+        padding: 16px;
+        border-radius: 18px;
+        border: 1px solid rgba(0, 0, 0, 0.08);
+        background: #fffdf9;
+      }
+
+      .log-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        margin-bottom: 12px;
+      }
+
+      .log-header h2 {
+        margin: 0;
+        font-size: 1rem;
+      }
+
+      .log-actions {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+        align-items: center;
+      }
+
+      .log-tabs {
+        display: inline-flex;
+        border-radius: 999px;
+        border: 1px solid var(--border);
+        background: #fff;
+        overflow: hidden;
+      }
+
+      .log-tab {
+        border: none;
+        background: transparent;
+        padding: 6px 14px;
+        font-size: 0.78rem;
+        font-weight: 700;
+        color: var(--muted);
+        cursor: pointer;
+      }
+
+      .log-tab.active {
+        background: var(--accent);
+        color: #fff;
+      }
+
+      .log-output {
+        margin: 0;
+        padding: 12px;
+        border-radius: 12px;
+        background: #161614;
+        color: #f8f4ec;
+        font-size: 0.78rem;
+        line-height: 1.5;
+        min-height: 160px;
+        max-height: 360px;
+        overflow: auto;
+      }
+
+      .domain-group-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        margin-bottom: 12px;
+      }
+
+      .domain-group-title {
+        font-size: 1rem;
+        font-weight: 700;
+      }
+
+      .domain-group-actions {
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+      }
+
+      .modal {
+        position: fixed;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: rgba(28, 28, 24, 0.35);
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 0.2s ease;
+        padding: 20px;
+        z-index: 20;
+      }
+
+      .modal.open {
+        opacity: 1;
+        pointer-events: auto;
+      }
+
+      .modal-card {
+        background: #fff;
+        border-radius: 18px;
+        padding: 20px;
+        width: min(420px, 100%);
+        box-shadow: var(--shadow);
+      }
+
+      .modal-card h3 {
+        margin: 0 0 12px;
+        font-size: 1.1rem;
+      }
+
+      .modal-actions {
+        display: flex;
+        justify-content: flex-end;
+        gap: 10px;
+        margin-top: 16px;
+      }
+
+      .records-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 0.9rem;
+        min-width: 720px;
+      }
+
+      .records-table th,
+      .records-table td {
+        padding: 12px 10px;
+        text-align: left;
+        border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+      }
+
+      .records-table th {
+        font-size: 0.8rem;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: var(--muted);
+      }
+
+      .pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 4px 10px;
+        border-radius: 999px;
+        font-size: 0.75rem;
+        font-weight: 600;
+      }
+
+      .pill.ok {
+        background: rgba(20, 128, 74, 0.15);
+        color: var(--success);
+      }
+
+      .pill.off {
+        background: rgba(192, 57, 43, 0.15);
+        color: var(--danger);
+      }
+
+      .pill.mode.auto {
+        background: rgba(15, 118, 110, 0.16);
+        color: var(--accent);
+      }
+
+      .pill.mode.manual {
+        background: rgba(15, 23, 42, 0.08);
+        color: var(--muted);
+      }
+
+      .mono {
+        font-family: "SFMono-Regular", "Menlo", "Monaco", "Consolas", "Liberation Mono", "Courier New", monospace;
+      }
+
+      .record-actions {
+        display: flex;
+        gap: 8px;
+      }
+
+      .record-actions button {
+        font-size: 0.75rem;
+        padding: 6px 10px;
+        border-radius: 10px;
+      }
+
+      .inline-input {
+        width: 100%;
+        padding: 8px 10px;
+        border-radius: 10px;
+        border: 1px solid var(--border);
+        background: #fff;
+        font-family: inherit;
+      }
+
+      .value-cell {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+
+      .value-display {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+
+      .inline-select {
+        padding: 6px 10px;
+        border-radius: 10px;
+        border: 1px solid var(--border);
+        background: #fff;
+        font-family: inherit;
+        font-size: 0.75rem;
+        font-weight: 600;
+        color: var(--muted);
+      }
+
+      .inline-select:disabled {
+        opacity: 0.6;
+      }
+
+      tr.editing {
+        background: rgba(15, 118, 110, 0.08);
+      }
+
+      .empty {
+        padding: 18px;
+        border-radius: 14px;
+        background: rgba(241, 180, 59, 0.15);
+        color: #8a5b10;
+        font-weight: 600;
+      }
+
+      .toast {
+        position: fixed;
+        bottom: 24px;
+        right: 24px;
+        background: #1c1c18;
+        color: #fff;
+        padding: 12px 16px;
+        border-radius: 12px;
+        opacity: 0;
+        transform: translateY(12px);
+        transition: opacity 0.3s ease, transform 0.3s ease;
+        max-width: 360px;
+      }
+
+      .toast.show {
+        opacity: 1;
+        transform: translateY(0);
+      }
+
+      .note {
+        font-size: 0.78rem;
+        color: var(--muted);
+        margin-top: 10px;
+      }
+
+      @keyframes rise {
+        from {
+          opacity: 0;
+          transform: translateY(12px);
+        }
+        to {
+          opacity: 1;
+          transform: translateY(0);
+        }
+      }
+
+      @media (max-width: 980px) {
+        .title-row {
+          flex-direction: column;
+          align-items: flex-start;
+        }
+
+        .summary {
+          width: 100%;
+          justify-content: flex-start;
+        }
+
+        .toolbar-row {
+          grid-template-columns: 1fr;
+        }
+
+        .toolbar-actions {
+          justify-content: flex-start;
+        }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        * {
+          animation: none !important;
+          transition: none !important;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="orb"></div>
+    <div class="shell">
+      <div class="panel-grid">
+        <section class="panel" id="records-panel">
+          <div class="toolbar">
+            <div class="title-row">
+              <div>
+                <h1>AliDDNS Records</h1>
+                <p class="subtitle">Manage DNS records in-place. Edit a row to update, or add a new entry.</p>
+              </div>
+              <div class="summary">
+                <div class="summary-item">
+                  <span>Records</span>
+                  <strong id="stat-total">0</strong>
+                </div>
+                <div class="summary-item">
+                  <span>Last refresh</span>
+                  <strong class="mono" id="stat-refresh">--</strong>
+                </div>
+                <div class="summary-item">
+                  <span>API / hour</span>
+                  <strong
+                    class="mono resettable"
+                    id="stat-api-rate"
+                    title="Double-click to reset"
+                  >0.00</strong>
+                </div>
+              </div>
+            </div>
+            <div class="domain-list" id="domain-list"></div>
+            <div class="toolbar-row">
+              <div class="toolbar-actions">
+                <button class="button secondary" id="open-settings-modal">Settings</button>
+                <button class="button secondary" id="refresh">Refresh</button>
+                <button class="button secondary" id="open-domain-modal">Add domain</button>
+                <label class="toggle" for="toggle-logs">
+                  <input type="checkbox" id="toggle-logs" />
+                  <span class="toggle-slider"></span>
+                  <span class="toggle-label">Logs</span>
+                </label>
+              </div>
+            </div>
+            <p class="note">
+              Edit any row to switch it into inline edit mode. Add domains from the Aliyun list before records appear.
+            </p>
+          </div>
+          <div id="domain-groups"></div>
+          <div class="empty" id="records-empty" hidden>Add a domain to view records.</div>
+          <div class="log-panel" id="logs-panel" hidden>
+            <div class="log-header">
+              <h2>Logs</h2>
+              <div class="log-actions">
+                <div class="log-tabs" role="tablist" aria-label="Log level">
+                  <button class="log-tab active" data-log-level="info" role="tab" aria-selected="true">Info</button>
+                  <button class="log-tab" data-log-level="error" role="tab" aria-selected="false">Error</button>
+                </div>
+                <button class="button secondary" id="clear-logs">Clear</button>
+                <button class="button secondary" id="refresh-logs">Refresh logs</button>
+              </div>
+            </div>
+            <pre class="log-output" id="log-output">Logs are hidden.</pre>
+          </div>
+        </section>
+      </div>
+    </div>
+
+    <div class="toast" id="toast"></div>
+    <div class="modal" id="domain-modal" aria-hidden="true">
+      <div class="modal-card">
+        <h3>Add domain</h3>
+        <div class="field">
+          <label for="add-domain">Choose a domain</label>
+          <select id="add-domain"></select>
+        </div>
+        <div class="modal-actions">
+          <button class="button secondary" id="close-domain-modal">Cancel</button>
+          <button class="button" id="add-domain-button">Add</button>
+        </div>
+      </div>
+    </div>
+    <div class="modal" id="settings-modal" aria-hidden="true">
+      <div class="modal-card">
+        <h3>Settings</h3>
+        <div class="field">
+          <label for="access-key-id">AccessKey ID</label>
+          <input id="access-key-id" type="text" placeholder="LTAI..." />
+        </div>
+        <div class="field">
+          <label for="access-key-secret">AccessKey Secret</label>
+          <input id="access-key-secret" type="password" placeholder="••••••••" />
+        </div>
+        <div class="field">
+          <label for="refresh-interval">Refresh interval (sec)</label>
+          <input id="refresh-interval" type="number" min="30" step="30" placeholder="300" />
+        </div>
+        <div class="field">
+          <label for="auto-sync-interval">Auto sync interval (sec)</label>
+          <input id="auto-sync-interval" type="number" min="30" step="30" placeholder="300" />
+        </div>
+        <div class="field">
+          <label for="default-ttl">Default TTL</label>
+          <input id="default-ttl" type="number" min="60" step="60" placeholder="600" />
+        </div>
+        <div class="modal-actions">
+          <button class="button secondary" id="close-settings-modal">Cancel</button>
+          <button class="button" id="save-settings">Save</button>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      const MOCK_CONFIG_PATH = "../mock/mock.config.json";
+      const CONFIG_STORAGE_KEY = "aliddns-ui-config";
+      const API_STATS_STORAGE_KEY = "aliddns-ui-api-stats";
+      const state = {
+        loading: false,
+        editingId: null,
+        editingDomain: null,
+        lastRefresh: null,
+        useMock: false,
+        domain: "",
+        apiBase: "/cgi-bin/aliddns",
+        mockConfig: null,
+        editingDraft: null,
+        availableDomains: [],
+        trackedDomains: [],
+        recordsByDomain: {},
+        refreshTimer: null,
+        mockRefreshIntervalSec: null,
+        config: null,
+        logLevel: "info",
+        logAutoRefreshTimer: null,
+        autoRecordsById: {},
+        apiStats: { count: 0, perHour: 0 },
+      };
+
+      const elements = {
+        statTotal: document.getElementById("stat-total"),
+        statRefresh: document.getElementById("stat-refresh"),
+        statApiRate: document.getElementById("stat-api-rate"),
+        recordsEmpty: document.getElementById("records-empty"),
+        apiBase: null,
+        toast: document.getElementById("toast"),
+        addDomain: document.getElementById("add-domain"),
+        addDomainButton: document.getElementById("add-domain-button"),
+        domainList: document.getElementById("domain-list"),
+        domainGroups: document.getElementById("domain-groups"),
+        domainModal: document.getElementById("domain-modal"),
+        openDomainModal: document.getElementById("open-domain-modal"),
+        closeDomainModal: document.getElementById("close-domain-modal"),
+        settingsModal: document.getElementById("settings-modal"),
+        openSettingsModal: document.getElementById("open-settings-modal"),
+        closeSettingsModal: document.getElementById("close-settings-modal"),
+        saveSettingsButton: document.getElementById("save-settings"),
+        accessKeyId: document.getElementById("access-key-id"),
+        accessKeySecret: document.getElementById("access-key-secret"),
+        refreshInterval: document.getElementById("refresh-interval"),
+        autoSyncInterval: document.getElementById("auto-sync-interval"),
+        defaultTtl: document.getElementById("default-ttl"),
+        toggleLogs: document.getElementById("toggle-logs"),
+        logsPanel: document.getElementById("logs-panel"),
+        refreshLogsButton: document.getElementById("refresh-logs"),
+        logOutput: document.getElementById("log-output"),
+        clearLogsButton: document.getElementById("clear-logs"),
+        logTabs: Array.from(document.querySelectorAll(".log-tab")),
+      };
+
+      const defaultConfig = {
+        accessKeyId: "",
+        accessKeySecret: "",
+        refreshIntervalSec: 300,
+        autoSyncIntervalSec: 300,
+        defaultTtl: 600,
+      };
+
+      function showToast(message) {
+        elements.toast.textContent = message;
+        elements.toast.classList.add("show");
+        clearTimeout(elements.toast.timer);
+        elements.toast.timer = setTimeout(() => elements.toast.classList.remove("show"), 3200);
+      }
+
+      function formatTime(iso) {
+        if (!iso) return "--";
+        const date = new Date(iso);
+        return date.toLocaleString();
+      }
+
+      function setLogLevel(level) {
+        state.logLevel = level;
+        elements.logTabs.forEach((tab) => {
+          const active = tab.dataset.logLevel === level;
+          tab.classList.toggle("active", active);
+          tab.setAttribute("aria-selected", active ? "true" : "false");
+        });
+        if (!elements.logsPanel.hidden) {
+          refreshLogs();
+        }
+      }
+
+      function stopLogAutoRefresh() {
+        if (state.logAutoRefreshTimer) {
+          clearInterval(state.logAutoRefreshTimer);
+          state.logAutoRefreshTimer = null;
+        }
+      }
+
+      function startLogAutoRefresh() {
+        stopLogAutoRefresh();
+        refreshLogs();
+        state.logAutoRefreshTimer = setInterval(() => refreshLogs(), 5000);
+      }
+
+      function setLogsVisible(visible) {
+        elements.logsPanel.hidden = !visible;
+        if (visible) {
+          startLogAutoRefresh();
+        } else {
+          stopLogAutoRefresh();
+        }
+      }
+
+      async function refreshLogs() {
+        if (!elements.logOutput) return;
+        if (state.useMock) {
+          elements.logOutput.textContent = "Logs are not available in mock mode.";
+          return;
+        }
+        const url = `${state.apiBase.replace(/\/$/, "")}/logs?level=${encodeURIComponent(
+          state.logLevel
+        )}&tail=200`;
+        elements.logOutput.textContent = "Loading logs...";
+        try {
+          const response = await fetch(url, { cache: "no-store" });
+          if (!response.ok) {
+            const text = await response.text();
+            throw new Error(text || `Logs load failed (${response.status})`);
+          }
+          const text = await response.text();
+          elements.logOutput.textContent = text || "No log entries.";
+        } catch (err) {
+          elements.logOutput.textContent = `Failed to load logs: ${err.message}`;
+          showToast(`Logs load failed: ${err.message}`);
+        } finally {
+          elements.logOutput.scrollTop = elements.logOutput.scrollHeight;
+        }
+      }
+
+      function domainsStorageKey() {
+        return "aliddns-tracked-domains";
+      }
+
+      function loadTrackedDomains() {
+        const raw = localStorage.getItem(domainsStorageKey());
+        if (!raw) return [];
+        try {
+          return JSON.parse(raw);
+        } catch (err) {
+          return [];
+        }
+      }
+
+      function saveTrackedDomains(domains) {
+        localStorage.setItem(domainsStorageKey(), JSON.stringify(domains));
+      }
+
+      function storageKey(domain) {
+        return domain ? `aliddns-mock-records:${domain}` : "aliddns-mock-records";
+      }
+
+      function loadMockRecords(domain) {
+        if (!domain) return [];
+        const raw = localStorage.getItem(storageKey(domain));
+        if (!raw) return [];
+        try {
+          return JSON.parse(raw);
+        } catch (err) {
+          return [];
+        }
+      }
+
+      function saveMockRecords(domain, records) {
+        localStorage.setItem(storageKey(domain), JSON.stringify(records));
+      }
+
+      async function loadMockConfig() {
+        const response = await fetch(MOCK_CONFIG_PATH, { cache: "no-store" });
+        if (!response.ok) {
+          throw new Error(`Mock config not found (${response.status})`);
+        }
+        return response.json();
+      }
+
+      function applyMockConfig(config) {
+        if (!config || config.enabled !== true) {
+          return false;
+        }
+        state.useMock = true;
+        state.mockConfig = config;
+        state.mockRefreshIntervalSec =
+          Number(config.refreshIntervalSec) || Number(config.refreshInterval) || null;
+        if (Array.isArray(config.domains)) {
+          state.availableDomains = config.domains.slice();
+        }
+        if (Array.isArray(config.trackedDomains)) {
+          state.trackedDomains = config.trackedDomains.slice();
+        }
+        if (Array.isArray(config.seedRecords) && config.seedRecords.length) {
+          const seedDomains = state.trackedDomains.length ? state.trackedDomains : state.availableDomains;
+          seedDomains.forEach((domain) => {
+            const existing = loadMockRecords(domain);
+            if (!existing || !existing.length) {
+              saveMockRecords(domain, config.seedRecords.map(normalizeRecord));
+            }
+          });
+        }
+        scheduleRefresh();
+        return true;
+      }
+
+      async function enableMockFromConfig() {
+        try {
+          const config = await loadMockConfig();
+          return applyMockConfig(config);
+        } catch (err) {
+          return false;
+        }
+      }
+
+      function generateId() {
+        return `mock-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+      }
+
+      function loadConfig() {
+        const raw = localStorage.getItem(CONFIG_STORAGE_KEY);
+        if (!raw) return { ...defaultConfig };
+        try {
+          const parsed = JSON.parse(raw);
+          return {
+            ...defaultConfig,
+            ...parsed,
+            refreshIntervalSec: Number(parsed.refreshIntervalSec ?? defaultConfig.refreshIntervalSec),
+            autoSyncIntervalSec: Number(parsed.autoSyncIntervalSec ?? defaultConfig.autoSyncIntervalSec),
+            defaultTtl: Number(parsed.defaultTtl ?? defaultConfig.defaultTtl),
+          };
+        } catch (err) {
+          return { ...defaultConfig };
+        }
+      }
+
+      function saveConfig(config) {
+        localStorage.setItem(CONFIG_STORAGE_KEY, JSON.stringify(config));
+      }
+
+      function applyConfig(config) {
+        state.config = { ...defaultConfig, ...config };
+        scheduleRefresh();
+      }
+
+      function loadLocalApiStats() {
+        const now = Math.floor(Date.now() / 1000);
+        let stored = {};
+        try {
+          stored = JSON.parse(localStorage.getItem(API_STATS_STORAGE_KEY) || "{}");
+        } catch (err) {
+          stored = {};
+        }
+        let startTs = Number(stored.startTs);
+        let count = Number(stored.count);
+        if (!Number.isFinite(startTs) || startTs <= 0) startTs = now;
+        if (!Number.isFinite(count) || count < 0) count = 0;
+        return { startTs, count, now };
+      }
+
+      function saveLocalApiStats(stats) {
+        localStorage.setItem(
+          API_STATS_STORAGE_KEY,
+          JSON.stringify({ startTs: stats.startTs, count: stats.count })
+        );
+      }
+
+      function computeApiRate(count, startTs, now) {
+        const elapsed = Math.max(1, now - startTs);
+        return (count * 3600) / elapsed;
+      }
+
+      function bumpLocalApiStats(delta) {
+        const stats = loadLocalApiStats();
+        stats.count += delta;
+        stats.now = Math.floor(Date.now() / 1000);
+        saveLocalApiStats(stats);
+        state.apiStats = {
+          count: stats.count,
+          perHour: computeApiRate(stats.count, stats.startTs, stats.now),
+        };
+      }
+
+      function resetLocalApiStats() {
+        const now = Math.floor(Date.now() / 1000);
+        const stats = { startTs: now, count: 0 };
+        saveLocalApiStats(stats);
+        state.apiStats = { count: 0, perHour: 0 };
+      }
+
+      async function refreshApiStats() {
+        if (state.useMock) {
+          const stats = loadLocalApiStats();
+          state.apiStats = {
+            count: stats.count,
+            perHour: computeApiRate(stats.count, stats.startTs, stats.now),
+          };
+          return;
+        }
+        const url = `${state.apiBase.replace(/\/$/, "")}/api-stats`;
+        try {
+          const data = await apiRequest("GET", url);
+          state.apiStats = {
+            count: Number(data.count) || 0,
+            perHour: Number(data.perHour) || 0,
+          };
+        } catch (err) {
+          state.apiStats = { count: 0, perHour: 0 };
+        }
+      }
+
+      async function resetApiStats() {
+        if (state.useMock) {
+          resetLocalApiStats();
+          return;
+        }
+        const url = `${state.apiBase.replace(/\/$/, "")}/api-stats`;
+        await apiRequest("POST", url, {});
+      }
+
+      async function loadServerConfig() {
+        const url = `${state.apiBase.replace(/\/$/, "")}/settings`;
+        const response = await fetch(url, { cache: "no-store" });
+        if (!response.ok) {
+          throw new Error(`Settings load failed (${response.status})`);
+        }
+        const data = await response.json();
+        return {
+          ...defaultConfig,
+          accessKeyId: data.accessKeyId || "",
+          accessKeySecret: data.accessKeySecret || "",
+          refreshIntervalSec: Number(data.refreshIntervalSec ?? data.interval ?? defaultConfig.refreshIntervalSec),
+          autoSyncIntervalSec: Number(
+            data.autoSyncIntervalSec ?? data.autoInterval ?? defaultConfig.autoSyncIntervalSec
+          ),
+          defaultTtl: Number(data.defaultTtl ?? data.ttl ?? defaultConfig.defaultTtl),
+        };
+      }
+
+      async function saveServerConfig(config) {
+        const url = `${state.apiBase.replace(/\/$/, "")}/settings`;
+        const response = await fetch(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(config),
+        });
+        if (!response.ok) {
+          const text = await response.text();
+          throw new Error(text || `Settings save failed (${response.status})`);
+        }
+        return response.json();
+      }
+
+      function renderSettingsForm() {
+        if (!state.config) return;
+        elements.accessKeyId.value = state.config.accessKeyId || "";
+        elements.accessKeySecret.value = state.config.accessKeySecret || "";
+        elements.refreshInterval.value = state.config.refreshIntervalSec || defaultConfig.refreshIntervalSec;
+        elements.autoSyncInterval.value =
+          state.config.autoSyncIntervalSec || defaultConfig.autoSyncIntervalSec;
+        elements.defaultTtl.value = state.config.defaultTtl || defaultConfig.defaultTtl;
+      }
+
+      function scheduleRefresh() {
+        if (state.refreshTimer) {
+          clearInterval(state.refreshTimer);
+          state.refreshTimer = null;
+        }
+        const interval = state.useMock
+          ? Number(state.mockRefreshIntervalSec) || Number(state.config?.refreshIntervalSec) || 0
+          : Number(state.config?.refreshIntervalSec) || 0;
+        if (interval > 0) {
+          state.refreshTimer = setInterval(() => refreshRecords(), interval * 1000);
+        }
+      }
+
+      function normalizeRecord(record) {
+        return {
+          id: record.RecordId || record.id || record.recordId || generateId(),
+          rr: record.RR || record.rr || "@",
+          type: record.Type || record.type || "A",
+          value: record.Value || record.value || "",
+          ttl: Number(record.TTL || record.ttl || 600),
+          status: record.Status || record.status || "ENABLE",
+          updated: record.UpdateTimestamp
+            ? new Date(record.UpdateTimestamp).toISOString()
+            : record.updated || new Date().toISOString(),
+        };
+      }
+
+      function allowsAutoIp(type) {
+        return type === "A" || type === "AAAA";
+      }
+
+      function extractRecords(data) {
+        if (!data) return [];
+        if (Array.isArray(data)) return data;
+        if (Array.isArray(data.records)) return data.records;
+        if (data.DomainRecords && Array.isArray(data.DomainRecords.Record)) return data.DomainRecords.Record;
+        return [];
+      }
+
+      function extractDomains(data) {
+        if (!data) return [];
+        let list = [];
+        if (Array.isArray(data)) list = data;
+        if (Array.isArray(data.domains)) list = data.domains;
+        if (data.Domains && Array.isArray(data.Domains.Domain)) list = data.Domains.Domain;
+        if (Array.isArray(data.DomainNames)) list = data.DomainNames;
+        if (Array.isArray(data.data)) list = data.data;
+        return list
+          .map((item) => {
+            if (typeof item === "string") return item;
+            if (item.DomainName) return item.DomainName;
+            if (item.domain) return item.domain;
+            return "";
+          })
+          .filter(Boolean);
+      }
+
+      async function apiRequest(method, path, payload) {
+        const response = await fetch(path, {
+          method,
+          headers: { "Content-Type": "application/json" },
+          body: payload ? JSON.stringify(payload) : undefined,
+        });
+        if (!response.ok) {
+          const text = await response.text();
+          throw new Error(text || `${response.status} ${response.statusText}`);
+        }
+        return response.json();
+      }
+
+      async function refreshAutoRecords() {
+        if (state.useMock) {
+          state.autoRecordsById = {};
+          return;
+        }
+        const url = `${state.apiBase.replace(/\/$/, "")}/auto-records`;
+        const data = await apiRequest("GET", url);
+        const list = Array.isArray(data.records) ? data.records : [];
+        state.autoRecordsById = list.reduce((acc, item) => {
+          if (item && item.recordId) {
+            acc[item.recordId] = item;
+          }
+          return acc;
+        }, {});
+      }
+
+      async function saveAutoRecord(recordId, domain, record) {
+        const url = `${state.apiBase.replace(/\/$/, "")}/auto-records`;
+        const payload = {
+          recordId,
+          domain,
+          rr: record.rr,
+          type: record.type,
+          ttl: record.ttl || state.config.defaultTtl,
+        };
+        await apiRequest("POST", url, payload);
+      }
+
+      async function removeAutoRecord(recordId) {
+        if (!recordId) return;
+        const url = `${state.apiBase.replace(/\/$/, "")}/auto-records/${encodeURIComponent(recordId)}`;
+        await apiRequest("DELETE", url);
+      }
+
+      async function fetchPublicIp() {
+        const url = `${state.apiBase.replace(/\/$/, "")}/public-ip`;
+        const response = await fetch(url, { cache: "no-store" });
+        if (!response.ok) {
+          const text = await response.text();
+          throw new Error(text || `Public IP fetch failed (${response.status})`);
+        }
+        const data = await response.json();
+        if (!data || !data.ip) {
+          throw new Error("Public IP unavailable");
+        }
+        return data.ip;
+      }
+
+      async function applyAutoIpToRow(row) {
+        const valueInput = row.querySelector('[data-field="value"]');
+        const modeSelect = row.querySelector('[data-field="valueMode"]');
+        if (!valueInput || !modeSelect) return;
+        valueInput.readOnly = true;
+        try {
+          const ip = await fetchPublicIp();
+          valueInput.value = ip;
+          showToast(`Using router IP ${ip}.`);
+        } catch (err) {
+          valueInput.readOnly = false;
+          modeSelect.value = "manual";
+          showToast(`Auto IP failed: ${err.message}`);
+        }
+      }
+
+      async function refreshRecords() {
+        state.loading = true;
+        renderStatus();
+        try {
+          state.recordsByDomain = {};
+          if (!state.trackedDomains.length) {
+            await refreshApiStats();
+            state.lastRefresh = new Date().toISOString();
+            return;
+          }
+
+          if (state.useMock) {
+            state.trackedDomains.forEach((domain) => {
+              const records = loadMockRecords(domain).map(normalizeRecord);
+              state.recordsByDomain[domain] = records;
+            });
+            bumpLocalApiStats(state.trackedDomains.length);
+          } else {
+            try {
+              await refreshAutoRecords();
+            } catch (err) {
+              state.autoRecordsById = {};
+              showToast(`Auto records load failed: ${err.message}`);
+            }
+            const base = state.apiBase.replace(/\/$/, "");
+            const results = await Promise.all(
+              state.trackedDomains.map(async (domain) => {
+                const url = `${base}/records?domain=${encodeURIComponent(domain)}`;
+                const data = await apiRequest("GET", url);
+                return [domain, extractRecords(data).map(normalizeRecord)];
+              })
+            );
+            results.forEach(([domain, records]) => {
+              records.forEach((record) => {
+                record.auto = !!state.autoRecordsById[record.id];
+              });
+              state.recordsByDomain[domain] = records;
+            });
+          }
+          await refreshApiStats();
+          state.lastRefresh = new Date().toISOString();
+        } catch (err) {
+          showToast(`Refresh failed: ${err.message}`);
+        } finally {
+          state.loading = false;
+          render();
+        }
+      }
+
+      async function saveRecord(domain, record, recordId) {
+        if (state.useMock) {
+          const current = state.recordsByDomain[domain] || [];
+          if (recordId) {
+            state.recordsByDomain[domain] = current.map((item) =>
+              item.id === recordId ? { ...item, ...record, updated: new Date().toISOString() } : item
+            );
+          } else {
+            state.recordsByDomain[domain] = [
+              { ...record, id: generateId(), status: "ENABLE", updated: new Date().toISOString() },
+              ...current,
+            ];
+          }
+          bumpLocalApiStats(1);
+          saveMockRecords(domain, state.recordsByDomain[domain]);
+          state.lastRefresh = new Date().toISOString();
+          await refreshRecords();
+          return;
+        }
+
+        let value = record.value;
+        if (record.valueMode === "auto" && allowsAutoIp(record.type)) {
+          value = await fetchPublicIp();
+        }
+
+        const payload = {
+          domain,
+          rr: record.rr,
+          type: record.type,
+          value,
+          ttl: record.ttl || state.config.defaultTtl,
+        };
+
+        if (recordId) {
+          const url = `${state.apiBase.replace(/\/$/, "")}/records/${encodeURIComponent(recordId)}`;
+          await apiRequest("PUT", url, payload);
+          if (record.valueMode === "auto") {
+            await saveAutoRecord(recordId, domain, payload);
+          } else {
+            await removeAutoRecord(recordId);
+          }
+        } else {
+          const url = `${state.apiBase.replace(/\/$/, "")}/records`;
+          const response = await apiRequest("POST", url, payload);
+          const newId = response.RecordId || response.recordId || response.id;
+          if (record.valueMode === "auto") {
+            if (!newId) {
+              throw new Error("Auto mode requires a recordId.");
+            }
+            await saveAutoRecord(newId, domain, payload);
+          }
+        }
+        await refreshRecords();
+      }
+
+      async function deleteRecord(domain, recordId) {
+        if (state.useMock) {
+          const current = state.recordsByDomain[domain] || [];
+          state.recordsByDomain[domain] = current.filter((item) => item.id !== recordId);
+          bumpLocalApiStats(1);
+          saveMockRecords(domain, state.recordsByDomain[domain]);
+          state.lastRefresh = new Date().toISOString();
+          await refreshRecords();
+          return;
+        }
+        const url = `${state.apiBase.replace(/\/$/, "")}/records/${encodeURIComponent(recordId)}?domain=${encodeURIComponent(
+          domain
+        )}`;
+        await apiRequest("DELETE", url);
+        await removeAutoRecord(recordId);
+        await refreshRecords();
+      }
+
+      function startEdit(domain, record) {
+        state.editingId = record.id;
+        state.editingDomain = domain;
+        state.editingDraft = {
+          rr: record.rr,
+          type: record.type,
+          value: record.value,
+          ttl: record.ttl,
+          status: record.status,
+          valueMode: record.auto ? "auto" : "manual",
+        };
+        render();
+      }
+
+      function startAdd(domain) {
+        state.editingId = "new";
+        state.editingDomain = domain;
+        state.editingDraft = {
+          rr: "",
+          type: "A",
+          value: "",
+          ttl: state.config ? state.config.defaultTtl : 600,
+          status: "ENABLE",
+          valueMode: "manual",
+        };
+        render();
+      }
+
+      function cancelEdit() {
+        state.editingId = null;
+        state.editingDomain = null;
+        state.editingDraft = null;
+        render();
+      }
+
+      function readRowValues(row) {
+        const modeSelect = row.querySelector('[data-field="valueMode"]');
+        return {
+          rr: row.querySelector('[data-field="rr"]').value.trim(),
+          type: row.querySelector('[data-field="type"]').value,
+          value: row.querySelector('[data-field="value"]').value.trim(),
+          ttl: Number(row.querySelector('[data-field="ttl"]').value),
+          status: row.querySelector('[data-field="status"]').value,
+          valueMode: modeSelect ? modeSelect.value : "manual",
+        };
+      }
+
+      function renderStatus() {}
+
+      function render() {
+        renderStatus();
+        const totalRecords = Object.values(state.recordsByDomain).reduce((sum, list) => sum + list.length, 0);
+        elements.statTotal.textContent = totalRecords;
+        elements.statRefresh.textContent = state.lastRefresh ? formatTime(state.lastRefresh) : "--";
+        const apiRate = Number(state.apiStats?.perHour);
+        elements.statApiRate.textContent = Number.isFinite(apiRate) ? apiRate.toFixed(2) : "--";
+        elements.statApiRate.title = `Double-click to reset (count ${state.apiStats?.count ?? 0})`;
+
+        if (!totalRecords) {
+          elements.recordsEmpty.hidden = false;
+          elements.recordsEmpty.textContent = state.trackedDomains.length
+            ? "No records yet. Add the first entry."
+            : "Add a domain to view records.";
+        } else {
+          elements.recordsEmpty.hidden = true;
+        }
+
+        elements.domainList.innerHTML = state.trackedDomains
+          .map(
+            (domain) =>
+              `<span class="domain-pill ${domain === state.domain ? "active" : ""}">${domain}</span>`
+          )
+          .join("");
+
+        const groups = state.trackedDomains.map((domain) => {
+          const records = state.recordsByDomain[domain] || [];
+        const rows = [];
+        if (state.editingId === "new" && state.editingDomain === domain) {
+          rows.push(renderEditingRow(state.editingDraft, "new", domain));
+        }
+          records.forEach((record, index) => {
+            if (state.editingId === record.id && state.editingDomain === domain) {
+              rows.push(renderEditingRow({ ...record, ...state.editingDraft }, record.id, domain));
+            } else {
+              rows.push(renderRecordRow(record, index, domain));
+            }
+          });
+          const emptyRow = rows.length
+            ? ""
+            : `<tr><td colspan="7" class="mono">No records.</td></tr>`;
+          return `
+            <div class="domain-group">
+              <div class="domain-group-header">
+                <div class="domain-group-title">${domain}</div>
+                <div class="domain-group-actions">
+                  <button class="button secondary" data-action="add-record" data-domain="${domain}">Add record</button>
+                  <button class="button danger" data-action="remove-domain" data-domain="${domain}">
+                    Remove domain
+                  </button>
+                </div>
+              </div>
+              <div class="table-wrap">
+                <table class="records-table">
+                  <thead>
+                    <tr>
+                      <th>Record</th>
+                      <th>Type</th>
+                      <th>Value</th>
+                      <th>TTL</th>
+                      <th>Status</th>
+                      <th>Updated</th>
+                      <th>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    ${rows.join("") || emptyRow}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          `;
+        });
+        elements.domainGroups.innerHTML = groups.join("");
+      }
+
+      function updateContext() {
+        state.domain = state.domain || "";
+      }
+
+      async function refreshDomains() {
+        try {
+          if (state.useMock) {
+            if (!state.availableDomains.length && state.mockConfig && Array.isArray(state.mockConfig.domains)) {
+              state.availableDomains = state.mockConfig.domains.slice();
+            }
+            bumpLocalApiStats(1);
+          } else {
+            const url = `${state.apiBase.replace(/\/$/, "")}/domains`;
+            const data = await apiRequest("GET", url);
+            state.availableDomains = extractDomains(data);
+          }
+        } catch (err) {
+          showToast(`Domains load failed: ${err.message}`);
+        }
+
+        if (!state.trackedDomains.length) {
+          state.trackedDomains = loadTrackedDomains();
+        }
+
+        if (!state.domain && state.trackedDomains.length) {
+          state.domain = state.trackedDomains[0];
+        }
+      }
+
+      function renderDomains() {
+        const tracked = state.trackedDomains;
+        const available = state.availableDomains.filter((domain) => !tracked.includes(domain));
+
+        elements.addDomain.innerHTML = available.length
+          ? available.map((domain) => `<option value="${domain}">${domain}</option>`).join("")
+          : `<option value="">No domains available</option>`;
+        elements.addDomain.disabled = !available.length;
+        elements.addDomainButton.disabled = !available.length;
+      }
+
+      function renderRecordRow(record, index, domain) {
+        const mode = record.auto ? "auto" : "manual";
+        const modeLabel = mode === "auto" ? "Auto" : "Manual";
+        return `
+          <tr class="record-row" style="animation: rise 0.4s ease ${index * 40}ms both;">
+            <td><strong>${record.rr}.${domain}</strong></td>
+            <td><span class="pill ok">${record.type}</span></td>
+            <td>
+              <div class="value-display">
+                <span class="mono">${record.value}</span>
+                <span class="pill mode ${mode}">${modeLabel}</span>
+              </div>
+            </td>
+            <td>${record.ttl}</td>
+            <td><span class="pill ${record.status === "ENABLE" ? "ok" : "off"}">${record.status}</span></td>
+            <td class="mono">${formatTime(record.updated)}</td>
+            <td>
+              <div class="record-actions">
+                <button class="button secondary" data-action="edit" data-id="${record.id}" data-domain="${domain}">Edit</button>
+                <button class="button danger" data-action="delete" data-id="${record.id}" data-domain="${domain}">Delete</button>
+              </div>
+            </td>
+          </tr>
+        `;
+      }
+
+      function renderEditingRow(record, id, domain) {
+        const allowAuto = allowsAutoIp(record.type);
+        const baseMode = record.valueMode || (record.auto ? "auto" : "manual");
+        const valueMode = allowAuto ? baseMode : "manual";
+        const valueReadonly = valueMode === "auto" ? "readonly" : "";
+        const modeDisabled = allowAuto ? "" : "disabled";
+        return `
+          <tr class="record-row editing">
+            <td>
+              <input class="inline-input" data-field="rr" value="${record.rr || ""}" placeholder="home" />
+            </td>
+            <td>
+              <select class="inline-input" data-field="type">
+                ${["A", "AAAA", "CNAME", "TXT"]
+                  .map((type) => `<option value="${type}" ${record.type === type ? "selected" : ""}>${type}</option>`)
+                  .join("")}
+              </select>
+            </td>
+            <td>
+              <div class="value-cell">
+                <input class="inline-input mono" data-field="value" value="${record.value || ""}" placeholder="1.2.3.4" ${valueReadonly} />
+                <select class="inline-select" data-field="valueMode" ${modeDisabled}>
+                  <option value="manual" ${valueMode === "manual" ? "selected" : ""}>Manual</option>
+                  <option value="auto" ${valueMode === "auto" ? "selected" : ""}>Router IP</option>
+                </select>
+              </div>
+            </td>
+            <td><input class="inline-input" data-field="ttl" type="number" min="60" step="60" value="${
+              record.ttl || (state.config ? state.config.defaultTtl : 600)
+            }" /></td>
+            <td>
+              <select class="inline-input" data-field="status">
+                ${["ENABLE", "DISABLE"]
+                  .map((status) => `<option value="${status}" ${record.status === status ? "selected" : ""}>${status}</option>`)
+                  .join("")}
+              </select>
+            </td>
+            <td class="mono">${record.updated ? formatTime(record.updated) : "--"}</td>
+            <td>
+              <div class="record-actions">
+                <button class="button" data-action="save" data-id="${id}" data-domain="${domain}">Save</button>
+                <button class="button secondary" data-action="cancel">Cancel</button>
+              </div>
+            </td>
+          </tr>
+        `;
+      }
+
+      document.getElementById("refresh").addEventListener("click", () => {
+        updateContext();
+        refreshRecords();
+      });
+
+      elements.toggleLogs.addEventListener("change", () => {
+        setLogsVisible(elements.toggleLogs.checked);
+      });
+
+      elements.refreshLogsButton.addEventListener("click", () => {
+        refreshLogs();
+      });
+
+      elements.clearLogsButton.addEventListener("click", () => {
+        elements.logOutput.textContent = "";
+      });
+
+      elements.statApiRate.addEventListener("dblclick", async () => {
+        try {
+          await resetApiStats();
+          await refreshApiStats();
+          render();
+          showToast("API stats reset.");
+        } catch (err) {
+          showToast(`Reset failed: ${err.message}`);
+        }
+      });
+
+      elements.logTabs.forEach((tab) => {
+        tab.addEventListener("click", () => {
+          setLogLevel(tab.dataset.logLevel);
+        });
+      });
+
+      elements.openDomainModal.addEventListener("click", () => {
+        elements.domainModal.classList.add("open");
+      });
+
+      elements.closeDomainModal.addEventListener("click", () => {
+        elements.domainModal.classList.remove("open");
+      });
+
+      elements.addDomainButton.addEventListener("click", () => {
+        const domain = elements.addDomain.value;
+        if (!domain) return;
+        if (!state.trackedDomains.includes(domain)) {
+          state.trackedDomains.push(domain);
+          state.domain = domain;
+          saveTrackedDomains(state.trackedDomains);
+        }
+        renderDomains();
+        elements.domainModal.classList.remove("open");
+        refreshRecords();
+      });
+
+      elements.openSettingsModal.addEventListener("click", () => {
+        elements.settingsModal.classList.add("open");
+      });
+
+      elements.closeSettingsModal.addEventListener("click", () => {
+        elements.settingsModal.classList.remove("open");
+      });
+
+      elements.saveSettingsButton.addEventListener("click", async () => {
+        const config = {
+          accessKeyId: elements.accessKeyId.value.trim(),
+          accessKeySecret: elements.accessKeySecret.value.trim(),
+          refreshIntervalSec: Number(elements.refreshInterval.value) || defaultConfig.refreshIntervalSec,
+          autoSyncIntervalSec: Number(elements.autoSyncInterval.value) || defaultConfig.autoSyncIntervalSec,
+          defaultTtl: Number(elements.defaultTtl.value) || defaultConfig.defaultTtl,
+        };
+        try {
+          if (state.useMock) {
+            applyConfig(config);
+            saveConfig(config);
+            showToast("Settings saved locally.");
+          } else {
+            await saveServerConfig(config);
+            applyConfig(config);
+            showToast("Settings saved.");
+          }
+          elements.settingsModal.classList.remove("open");
+          refreshDomains().then(() => {
+            renderDomains();
+            refreshRecords();
+          });
+        } catch (err) {
+          showToast(`Save failed: ${err.message}`);
+        }
+      });
+
+      document.addEventListener("click", async (event) => {
+        const action = event.target.getAttribute("data-action");
+        const targetId = event.target.getAttribute("data-id");
+        const targetDomain = event.target.getAttribute("data-domain");
+        if (!action) return;
+        updateContext();
+        if (action === "add-record") {
+          startAdd(targetDomain);
+        }
+        if (action === "remove-domain") {
+          if (!targetDomain) return;
+          if (!confirm(`Remove ${targetDomain} from the UI list?`)) return;
+          state.trackedDomains = state.trackedDomains.filter((domain) => domain !== targetDomain);
+          if (state.domain === targetDomain) {
+            state.domain = state.trackedDomains[0] || "";
+          }
+          saveTrackedDomains(state.trackedDomains);
+          if (state.useMock) {
+            localStorage.removeItem(storageKey(targetDomain));
+          }
+          renderDomains();
+          refreshRecords();
+        }
+        if (action === "edit") {
+          const record = (state.recordsByDomain[targetDomain] || []).find((item) => item.id === targetId);
+          if (record) startEdit(targetDomain, record);
+        }
+        if (action === "cancel") {
+          cancelEdit();
+        }
+        if (action === "save") {
+          const row = event.target.closest("tr");
+          const payload = readRowValues(row);
+          const valueMissing = !payload.value && payload.valueMode !== "auto";
+          if (!targetDomain || !payload.rr || valueMissing) {
+            showToast("Domain, RR, and Value are required.");
+            return;
+          }
+          if (payload.valueMode === "auto" && !allowsAutoIp(payload.type)) {
+            showToast("Auto IP is available for A/AAAA records only.");
+            return;
+          }
+          try {
+            if (targetId === "new") {
+              await saveRecord(targetDomain, payload);
+            } else {
+              await saveRecord(targetDomain, payload, targetId);
+            }
+            showToast("Record saved.");
+            cancelEdit();
+          } catch (err) {
+            showToast(`Save failed: ${err.message}`);
+          }
+        }
+        if (action === "delete") {
+          const record = (state.recordsByDomain[targetDomain] || []).find((item) => item.id === targetId);
+          if (!record) return;
+          if (!confirm(`Delete ${record.rr}.${targetDomain}?`)) return;
+          try {
+            await deleteRecord(targetDomain, targetId);
+            showToast("Record deleted.");
+          } catch (err) {
+            showToast(`Delete failed: ${err.message}`);
+          }
+        }
+      });
+
+      document.addEventListener("change", (event) => {
+        const field = event.target.getAttribute("data-field");
+        if (!field) return;
+        const row = event.target.closest("tr");
+        if (!row) return;
+        if (field === "type") {
+          const allowAuto = allowsAutoIp(event.target.value);
+          const modeSelect = row.querySelector('[data-field="valueMode"]');
+          const valueInput = row.querySelector('[data-field="value"]');
+          if (!modeSelect || !valueInput) return;
+          if (!allowAuto) {
+            modeSelect.value = "manual";
+            modeSelect.disabled = true;
+            valueInput.readOnly = false;
+          } else {
+            modeSelect.disabled = false;
+            if (modeSelect.value === "auto") {
+              applyAutoIpToRow(row);
+            }
+          }
+        }
+        if (field === "valueMode") {
+          const valueInput = row.querySelector('[data-field="value"]');
+          const typeSelect = row.querySelector('[data-field="type"]');
+          if (!valueInput || !typeSelect) return;
+          if (!allowsAutoIp(typeSelect.value)) {
+            event.target.value = "manual";
+            event.target.disabled = true;
+            valueInput.readOnly = false;
+            return;
+          }
+          if (event.target.value === "auto") {
+            applyAutoIpToRow(row);
+          } else {
+            valueInput.readOnly = false;
+          }
+        }
+      });
+
+      function init() {
+        cancelEdit();
+        enableMockFromConfig().then((enabled) => {
+          state.useMock = enabled;
+          const configPromise = state.useMock ? Promise.resolve(loadConfig()) : loadServerConfig();
+          configPromise
+            .then((config) => {
+              applyConfig(config);
+              renderSettingsForm();
+            })
+            .catch((err) => {
+              showToast(err.message || "Settings load failed.");
+              applyConfig(defaultConfig);
+              renderSettingsForm();
+            })
+            .finally(() => {
+              const storedDomains = loadTrackedDomains();
+              if (storedDomains.length) {
+                state.trackedDomains = storedDomains;
+              } else if (state.trackedDomains.length) {
+                saveTrackedDomains(state.trackedDomains);
+              }
+              refreshDomains().then(() => {
+                renderDomains();
+                refreshRecords();
+              });
+            });
+        });
+      }
+
+      init();
+    </script>
+  </body>
+</html>
