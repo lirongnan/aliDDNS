@@ -450,6 +450,72 @@ handle_settings_post() {
 	respond '{"ok":true}'
 }
 
+normalize_domains_csv() {
+	local input="$1"
+	local output="" seen=" " item domain old_ifs
+	old_ifs=$IFS
+	IFS=','
+	set -- $input
+	IFS=$old_ifs
+	for item in "$@"; do
+		domain=$(printf '%s' "$item" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+		[ -n "$domain" ] || continue
+		case "$seen" in
+			*" $domain "*) continue ;;
+		esac
+		seen="${seen}${domain} "
+		if [ -n "$output" ]; then
+			output="${output},${domain}"
+		else
+			output="$domain"
+		fi
+	done
+	printf '%s' "$output"
+}
+
+domains_csv_to_json() {
+	local domains_csv="$1"
+	local output first item old_ifs
+	output='{"domains":['
+	first=1
+	old_ifs=$IFS
+	IFS=','
+	set -- $domains_csv
+	IFS=$old_ifs
+	for item in "$@"; do
+		[ -n "$item" ] || continue
+		if [ "$first" -eq 0 ]; then
+			output="${output},"
+		fi
+		first=0
+		output="${output}\"$(json_escape "$item")\""
+	done
+	output="${output}]}"
+	printf '%s' "$output"
+}
+
+handle_tracked_domains_get() {
+	local domains_csv
+	domains_csv=$(normalize_domains_csv "$(get_uci tracked_domains || true)")
+	log_info "Tracked domains requested"
+	respond "$(domains_csv_to_json "$domains_csv")"
+}
+
+handle_tracked_domains_post() {
+	local body domains_csv
+	body=$(cat)
+	domains_csv=$(json_field "$body" "domainsCsv")
+	domains_csv=$(normalize_domains_csv "$domains_csv")
+	if [ -n "$domains_csv" ]; then
+		set_uci tracked_domains "$domains_csv"
+	else
+		uci -q delete "${CONFIG}.${SECTION}.tracked_domains" || true
+	fi
+	uci -q commit "$CONFIG"
+	log_info "Tracked domains updated: ${domains_csv:-<empty>}"
+	respond '{"ok":true}'
+}
+
 handle_domains_get() {
 	load_auth
 	require_auth
@@ -530,6 +596,13 @@ case "$PATH_INFO" in
 		case "$REQUEST_METHOD" in
 			GET) handle_settings_get ;;
 			POST) handle_settings_post ;;
+			*) error_response "405" "Method not allowed" ;;
+		esac
+		;;
+	/tracked-domains)
+		case "$REQUEST_METHOD" in
+			GET) handle_tracked_domains_get ;;
+			POST) handle_tracked_domains_post ;;
 			*) error_response "405" "Method not allowed" ;;
 		esac
 		;;

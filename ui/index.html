@@ -716,29 +716,24 @@
     </div>
 
     <script>
-      const MOCK_CONFIG_PATH = "../mock/mock.config.json";
-      const CONFIG_STORAGE_KEY = "aliddns-ui-config";
-      const API_STATS_STORAGE_KEY = "aliddns-ui-api-stats";
       const state = {
         loading: false,
         editingId: null,
         editingDomain: null,
         lastRefresh: null,
-        useMock: false,
         domain: "",
         apiBase: "/cgi-bin/aliddns",
-        mockConfig: null,
         editingDraft: null,
         availableDomains: [],
         trackedDomains: [],
         recordsByDomain: {},
         refreshTimer: null,
-        mockRefreshIntervalSec: null,
         config: null,
         logLevel: "info",
         logAutoRefreshTimer: null,
         autoRecordsById: {},
         apiStats: { count: 0, perHour: 0 },
+        trackedDomainsSyncWarned: false,
       };
 
       const elements = {
@@ -829,10 +824,6 @@
 
       async function refreshLogs() {
         if (!elements.logOutput) return;
-        if (state.useMock) {
-          elements.logOutput.textContent = "Logs are not available in mock mode.";
-          return;
-        }
         const url = `${state.apiBase.replace(/\/$/, "")}/logs?level=${encodeURIComponent(
           state.logLevel
         )}&tail=200`;
@@ -857,106 +848,77 @@
         return "aliddns-tracked-domains";
       }
 
-      function loadTrackedDomains() {
+      function normalizeDomainList(domains) {
+        if (!Array.isArray(domains)) return [];
+        const seen = new Set();
+        return domains
+          .map((item) => String(item || "").trim())
+          .filter((domain) => {
+            if (!domain || seen.has(domain)) return false;
+            seen.add(domain);
+            return true;
+          });
+      }
+
+      function loadTrackedDomainsLocal() {
         const raw = localStorage.getItem(domainsStorageKey());
         if (!raw) return [];
         try {
-          return JSON.parse(raw);
+          return normalizeDomainList(JSON.parse(raw));
         } catch (err) {
           return [];
         }
       }
 
-      function saveTrackedDomains(domains) {
-        localStorage.setItem(domainsStorageKey(), JSON.stringify(domains));
+      function saveTrackedDomainsLocal(domains) {
+        localStorage.setItem(domainsStorageKey(), JSON.stringify(normalizeDomainList(domains)));
       }
 
-      function storageKey(domain) {
-        return domain ? `aliddns-mock-records:${domain}` : "aliddns-mock-records";
+      async function loadTrackedDomainsFromServer() {
+        const url = `${state.apiBase.replace(/\/$/, "")}/tracked-domains`;
+        const data = await apiRequest("GET", url);
+        return normalizeDomainList(data && Array.isArray(data.domains) ? data.domains : []);
       }
 
-      function loadMockRecords(domain) {
-        if (!domain) return [];
-        const raw = localStorage.getItem(storageKey(domain));
-        if (!raw) return [];
+      async function saveTrackedDomainsToServer(domains) {
+        const url = `${state.apiBase.replace(/\/$/, "")}/tracked-domains`;
+        const normalized = normalizeDomainList(domains);
+        await apiRequest("POST", url, { domainsCsv: normalized.join(",") });
+      }
+
+      async function loadTrackedDomains() {
         try {
-          return JSON.parse(raw);
-        } catch (err) {
-          return [];
-        }
-      }
-
-      function saveMockRecords(domain, records) {
-        localStorage.setItem(storageKey(domain), JSON.stringify(records));
-      }
-
-      async function loadMockConfig() {
-        const response = await fetch(MOCK_CONFIG_PATH, { cache: "no-store" });
-        if (!response.ok) {
-          throw new Error(`Mock config not found (${response.status})`);
-        }
-        return response.json();
-      }
-
-      function applyMockConfig(config) {
-        if (!config || config.enabled !== true) {
-          return false;
-        }
-        state.useMock = true;
-        state.mockConfig = config;
-        state.mockRefreshIntervalSec =
-          Number(config.refreshIntervalSec) || Number(config.refreshInterval) || null;
-        if (Array.isArray(config.domains)) {
-          state.availableDomains = config.domains.slice();
-        }
-        if (Array.isArray(config.trackedDomains)) {
-          state.trackedDomains = config.trackedDomains.slice();
-        }
-        if (Array.isArray(config.seedRecords) && config.seedRecords.length) {
-          const seedDomains = state.trackedDomains.length ? state.trackedDomains : state.availableDomains;
-          seedDomains.forEach((domain) => {
-            const existing = loadMockRecords(domain);
-            if (!existing || !existing.length) {
-              saveMockRecords(domain, config.seedRecords.map(normalizeRecord));
+          let domains = await loadTrackedDomainsFromServer();
+          if (!domains.length) {
+            const localDomains = loadTrackedDomainsLocal();
+            if (localDomains.length) {
+              await saveTrackedDomainsToServer(localDomains);
+              domains = localDomains;
             }
-          });
+          }
+          saveTrackedDomainsLocal(domains);
+          return domains;
+        } catch (err) {
+          return loadTrackedDomainsLocal();
         }
-        scheduleRefresh();
-        return true;
       }
 
-      async function enableMockFromConfig() {
+      async function saveTrackedDomains(domains) {
+        const normalized = normalizeDomainList(domains);
         try {
-          const config = await loadMockConfig();
-          return applyMockConfig(config);
+          await saveTrackedDomainsToServer(normalized);
+          state.trackedDomainsSyncWarned = false;
         } catch (err) {
-          return false;
+          if (!state.trackedDomainsSyncWarned) {
+            showToast(`Tracked domains sync failed: ${err.message}`);
+            state.trackedDomainsSyncWarned = true;
+          }
         }
+        saveTrackedDomainsLocal(normalized);
       }
 
       function generateId() {
-        return `mock-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
-      }
-
-      function loadConfig() {
-        const raw = localStorage.getItem(CONFIG_STORAGE_KEY);
-        if (!raw) return { ...defaultConfig };
-        try {
-          const parsed = JSON.parse(raw);
-          return {
-            ...defaultConfig,
-            ...parsed,
-            refreshIntervalSec: Number(parsed.refreshIntervalSec ?? defaultConfig.refreshIntervalSec),
-            autoSyncIntervalSec: Number(parsed.autoSyncIntervalSec ?? defaultConfig.autoSyncIntervalSec),
-            defaultTtl: Number(parsed.defaultTtl ?? defaultConfig.defaultTtl),
-          };
-        } catch (err) {
-          return { ...defaultConfig };
-        }
-      }
-
-      function saveConfig(config) {
-        localStorage.setItem(CONFIG_STORAGE_KEY, JSON.stringify(config));
+        return `tmp-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
       }
 
       function applyConfig(config) {
@@ -964,60 +926,7 @@
         scheduleRefresh();
       }
 
-      function loadLocalApiStats() {
-        const now = Math.floor(Date.now() / 1000);
-        let stored = {};
-        try {
-          stored = JSON.parse(localStorage.getItem(API_STATS_STORAGE_KEY) || "{}");
-        } catch (err) {
-          stored = {};
-        }
-        let startTs = Number(stored.startTs);
-        let count = Number(stored.count);
-        if (!Number.isFinite(startTs) || startTs <= 0) startTs = now;
-        if (!Number.isFinite(count) || count < 0) count = 0;
-        return { startTs, count, now };
-      }
-
-      function saveLocalApiStats(stats) {
-        localStorage.setItem(
-          API_STATS_STORAGE_KEY,
-          JSON.stringify({ startTs: stats.startTs, count: stats.count })
-        );
-      }
-
-      function computeApiRate(count, startTs, now) {
-        const elapsed = Math.max(1, now - startTs);
-        return (count * 3600) / elapsed;
-      }
-
-      function bumpLocalApiStats(delta) {
-        const stats = loadLocalApiStats();
-        stats.count += delta;
-        stats.now = Math.floor(Date.now() / 1000);
-        saveLocalApiStats(stats);
-        state.apiStats = {
-          count: stats.count,
-          perHour: computeApiRate(stats.count, stats.startTs, stats.now),
-        };
-      }
-
-      function resetLocalApiStats() {
-        const now = Math.floor(Date.now() / 1000);
-        const stats = { startTs: now, count: 0 };
-        saveLocalApiStats(stats);
-        state.apiStats = { count: 0, perHour: 0 };
-      }
-
       async function refreshApiStats() {
-        if (state.useMock) {
-          const stats = loadLocalApiStats();
-          state.apiStats = {
-            count: stats.count,
-            perHour: computeApiRate(stats.count, stats.startTs, stats.now),
-          };
-          return;
-        }
         const url = `${state.apiBase.replace(/\/$/, "")}/api-stats`;
         try {
           const data = await apiRequest("GET", url);
@@ -1031,10 +940,6 @@
       }
 
       async function resetApiStats() {
-        if (state.useMock) {
-          resetLocalApiStats();
-          return;
-        }
         const url = `${state.apiBase.replace(/\/$/, "")}/api-stats`;
         await apiRequest("POST", url, {});
       }
@@ -1087,9 +992,7 @@
           clearInterval(state.refreshTimer);
           state.refreshTimer = null;
         }
-        const interval = state.useMock
-          ? Number(state.mockRefreshIntervalSec) || Number(state.config?.refreshIntervalSec) || 0
-          : Number(state.config?.refreshIntervalSec) || 0;
+        const interval = Number(state.config?.refreshIntervalSec) || 0;
         if (interval > 0) {
           state.refreshTimer = setInterval(() => refreshRecords(), interval * 1000);
         }
@@ -1153,10 +1056,6 @@
       }
 
       async function refreshAutoRecords() {
-        if (state.useMock) {
-          state.autoRecordsById = {};
-          return;
-        }
         const url = `${state.apiBase.replace(/\/$/, "")}/auto-records`;
         const data = await apiRequest("GET", url);
         const list = Array.isArray(data.records) ? data.records : [];
@@ -1227,34 +1126,26 @@
             return;
           }
 
-          if (state.useMock) {
-            state.trackedDomains.forEach((domain) => {
-              const records = loadMockRecords(domain).map(normalizeRecord);
-              state.recordsByDomain[domain] = records;
-            });
-            bumpLocalApiStats(state.trackedDomains.length);
-          } else {
-            try {
-              await refreshAutoRecords();
-            } catch (err) {
-              state.autoRecordsById = {};
-              showToast(`Auto records load failed: ${err.message}`);
-            }
-            const base = state.apiBase.replace(/\/$/, "");
-            const results = await Promise.all(
-              state.trackedDomains.map(async (domain) => {
-                const url = `${base}/records?domain=${encodeURIComponent(domain)}`;
-                const data = await apiRequest("GET", url);
-                return [domain, extractRecords(data).map(normalizeRecord)];
-              })
-            );
-            results.forEach(([domain, records]) => {
-              records.forEach((record) => {
-                record.auto = !!state.autoRecordsById[record.id];
-              });
-              state.recordsByDomain[domain] = records;
-            });
+          try {
+            await refreshAutoRecords();
+          } catch (err) {
+            state.autoRecordsById = {};
+            showToast(`Auto records load failed: ${err.message}`);
           }
+          const base = state.apiBase.replace(/\/$/, "");
+          const results = await Promise.all(
+            state.trackedDomains.map(async (domain) => {
+              const url = `${base}/records?domain=${encodeURIComponent(domain)}`;
+              const data = await apiRequest("GET", url);
+              return [domain, extractRecords(data).map(normalizeRecord)];
+            })
+          );
+          results.forEach(([domain, records]) => {
+            records.forEach((record) => {
+              record.auto = !!state.autoRecordsById[record.id];
+            });
+            state.recordsByDomain[domain] = records;
+          });
           await refreshApiStats();
           state.lastRefresh = new Date().toISOString();
         } catch (err) {
@@ -1266,25 +1157,6 @@
       }
 
       async function saveRecord(domain, record, recordId) {
-        if (state.useMock) {
-          const current = state.recordsByDomain[domain] || [];
-          if (recordId) {
-            state.recordsByDomain[domain] = current.map((item) =>
-              item.id === recordId ? { ...item, ...record, updated: new Date().toISOString() } : item
-            );
-          } else {
-            state.recordsByDomain[domain] = [
-              { ...record, id: generateId(), status: "ENABLE", updated: new Date().toISOString() },
-              ...current,
-            ];
-          }
-          bumpLocalApiStats(1);
-          saveMockRecords(domain, state.recordsByDomain[domain]);
-          state.lastRefresh = new Date().toISOString();
-          await refreshRecords();
-          return;
-        }
-
         let value = record.value;
         if (record.valueMode === "auto" && allowsAutoIp(record.type)) {
           value = await fetchPublicIp();
@@ -1321,15 +1193,6 @@
       }
 
       async function deleteRecord(domain, recordId) {
-        if (state.useMock) {
-          const current = state.recordsByDomain[domain] || [];
-          state.recordsByDomain[domain] = current.filter((item) => item.id !== recordId);
-          bumpLocalApiStats(1);
-          saveMockRecords(domain, state.recordsByDomain[domain]);
-          state.lastRefresh = new Date().toISOString();
-          await refreshRecords();
-          return;
-        }
         const url = `${state.apiBase.replace(/\/$/, "")}/records/${encodeURIComponent(recordId)}?domain=${encodeURIComponent(
           domain
         )}`;
@@ -1469,22 +1332,15 @@
 
       async function refreshDomains() {
         try {
-          if (state.useMock) {
-            if (!state.availableDomains.length && state.mockConfig && Array.isArray(state.mockConfig.domains)) {
-              state.availableDomains = state.mockConfig.domains.slice();
-            }
-            bumpLocalApiStats(1);
-          } else {
-            const url = `${state.apiBase.replace(/\/$/, "")}/domains`;
-            const data = await apiRequest("GET", url);
-            state.availableDomains = extractDomains(data);
-          }
+          const url = `${state.apiBase.replace(/\/$/, "")}/domains`;
+          const data = await apiRequest("GET", url);
+          state.availableDomains = extractDomains(data);
         } catch (err) {
           showToast(`Domains load failed: ${err.message}`);
         }
 
         if (!state.trackedDomains.length) {
-          state.trackedDomains = loadTrackedDomains();
+          state.trackedDomains = await loadTrackedDomains();
         }
 
         if (!state.domain && state.trackedDomains.length) {
@@ -1619,17 +1475,17 @@
         elements.domainModal.classList.remove("open");
       });
 
-      elements.addDomainButton.addEventListener("click", () => {
+      elements.addDomainButton.addEventListener("click", async () => {
         const domain = elements.addDomain.value;
         if (!domain) return;
         if (!state.trackedDomains.includes(domain)) {
           state.trackedDomains.push(domain);
           state.domain = domain;
-          saveTrackedDomains(state.trackedDomains);
+          await saveTrackedDomains(state.trackedDomains);
         }
         renderDomains();
         elements.domainModal.classList.remove("open");
-        refreshRecords();
+        await refreshRecords();
       });
 
       elements.openSettingsModal.addEventListener("click", () => {
@@ -1649,20 +1505,13 @@
           defaultTtl: Number(elements.defaultTtl.value) || defaultConfig.defaultTtl,
         };
         try {
-          if (state.useMock) {
-            applyConfig(config);
-            saveConfig(config);
-            showToast("Settings saved locally.");
-          } else {
-            await saveServerConfig(config);
-            applyConfig(config);
-            showToast("Settings saved.");
-          }
+          await saveServerConfig(config);
+          applyConfig(config);
+          showToast("Settings saved.");
           elements.settingsModal.classList.remove("open");
-          refreshDomains().then(() => {
-            renderDomains();
-            refreshRecords();
-          });
+          await refreshDomains();
+          renderDomains();
+          await refreshRecords();
         } catch (err) {
           showToast(`Save failed: ${err.message}`);
         }
@@ -1684,12 +1533,9 @@
           if (state.domain === targetDomain) {
             state.domain = state.trackedDomains[0] || "";
           }
-          saveTrackedDomains(state.trackedDomains);
-          if (state.useMock) {
-            localStorage.removeItem(storageKey(targetDomain));
-          }
+          await saveTrackedDomains(state.trackedDomains);
           renderDomains();
-          refreshRecords();
+          await refreshRecords();
         }
         if (action === "edit") {
           const record = (state.recordsByDomain[targetDomain] || []).find((item) => item.id === targetId);
@@ -1774,34 +1620,28 @@
         }
       });
 
-      function init() {
+      async function init() {
         cancelEdit();
-        enableMockFromConfig().then((enabled) => {
-          state.useMock = enabled;
-          const configPromise = state.useMock ? Promise.resolve(loadConfig()) : loadServerConfig();
-          configPromise
-            .then((config) => {
-              applyConfig(config);
-              renderSettingsForm();
-            })
-            .catch((err) => {
-              showToast(err.message || "Settings load failed.");
-              applyConfig(defaultConfig);
-              renderSettingsForm();
-            })
-            .finally(() => {
-              const storedDomains = loadTrackedDomains();
-              if (storedDomains.length) {
-                state.trackedDomains = storedDomains;
-              } else if (state.trackedDomains.length) {
-                saveTrackedDomains(state.trackedDomains);
-              }
-              refreshDomains().then(() => {
-                renderDomains();
-                refreshRecords();
-              });
-            });
-        });
+        try {
+          const config = await loadServerConfig();
+          applyConfig(config);
+          renderSettingsForm();
+        } catch (err) {
+          showToast(err.message || "Settings load failed.");
+          applyConfig(defaultConfig);
+          renderSettingsForm();
+        }
+
+        const storedDomains = await loadTrackedDomains();
+        if (storedDomains.length) {
+          state.trackedDomains = storedDomains;
+        } else if (state.trackedDomains.length) {
+          await saveTrackedDomains(state.trackedDomains);
+        }
+
+        await refreshDomains();
+        renderDomains();
+        await refreshRecords();
       }
 
       init();

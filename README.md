@@ -135,6 +135,8 @@ UI 期望的 API 端点（示例）：
 - `GET /cgi-bin/aliddns/domains`
 - `GET /cgi-bin/aliddns/settings`
 - `POST /cgi-bin/aliddns/settings`
+- `GET /cgi-bin/aliddns/tracked-domains`
+- `POST /cgi-bin/aliddns/tracked-domains`
 - `GET /cgi-bin/aliddns/public-ip`
 - `GET /cgi-bin/aliddns/logs?level=info|error`
 - `GET /cgi-bin/aliddns/auto-records`
@@ -146,11 +148,11 @@ UI 期望的 API 端点（示例）：
 说明：
 
 - UI 需要先从 `GET /cgi-bin/aliddns/domains` 获取可用域名。
+- UI 的“已添加域名列表”通过 `GET/POST /cgi-bin/aliddns/tracked-domains` 保存在路由器（UCI）上。
 - 只有在 UI 中添加域名后，才会显示该域名的解析记录列表。
 - UI 的 AccessKey、刷新间隔、默认 TTL 等配置通过 `settings` 接口保存在路由器（UCI）。
 - UI 支持为 A/AAAA 记录启用“自动获取路由公网 IP”模式，后台会按 `auto_interval` 自动同步。
 - UI 顶部显示 API 每小时访问次数，双击数字可清零重新统计。
-- 如需在无后端时调试 UI，可使用 `mock/mock.config.json`（模板见 `mock/mock.config.template.json`）。
 - 需确保 uhttpd 启用 CGI（默认 `/cgi-bin` 前缀）。
 
 ## 调试
