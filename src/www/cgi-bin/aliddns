@@ -504,7 +504,10 @@ handle_tracked_domains_get() {
 handle_tracked_domains_post() {
 	local body domains_csv
 	body=$(cat)
-	domains_csv=$(json_field "$body" "domainsCsv")
+	domains_csv=$(json_field "$body" "domains")
+	if [ -z "$domains_csv" ]; then
+		domains_csv=$(json_field "$body" "domainsCsv")
+	fi
 	domains_csv=$(normalize_domains_csv "$domains_csv")
 	if [ -n "$domains_csv" ]; then
 		set_uci tracked_domains "$domains_csv"

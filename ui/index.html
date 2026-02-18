@@ -883,7 +883,7 @@
       async function saveTrackedDomainsToServer(domains) {
         const url = `${state.apiBase.replace(/\/$/, "")}/tracked-domains`;
         const normalized = normalizeDomainList(domains);
-        await apiRequest("POST", url, { domainsCsv: normalized.join(",") });
+        await apiRequest("POST", url, { domains: normalized.join(",") });
       }
 
       async function loadTrackedDomains() {
@@ -1119,8 +1119,8 @@
         state.loading = true;
         renderStatus();
         try {
-          state.recordsByDomain = {};
           if (!state.trackedDomains.length) {
+            state.recordsByDomain = {};
             await refreshApiStats();
             state.lastRefresh = new Date().toISOString();
             return;
@@ -1133,19 +1133,33 @@
             showToast(`Auto records load failed: ${err.message}`);
           }
           const base = state.apiBase.replace(/\/$/, "");
-          const results = await Promise.all(
+          const previousRecords = state.recordsByDomain || {};
+          const nextRecords = {};
+          const failedDomains = [];
+          const results = await Promise.allSettled(
             state.trackedDomains.map(async (domain) => {
               const url = `${base}/records?domain=${encodeURIComponent(domain)}`;
               const data = await apiRequest("GET", url);
-              return [domain, extractRecords(data).map(normalizeRecord)];
+              return { domain, records: extractRecords(data).map(normalizeRecord) };
             })
           );
-          results.forEach(([domain, records]) => {
-            records.forEach((record) => {
-              record.auto = !!state.autoRecordsById[record.id];
-            });
-            state.recordsByDomain[domain] = records;
+          results.forEach((result, index) => {
+            const domain = state.trackedDomains[index];
+            if (result.status === "fulfilled") {
+              const records = result.value.records;
+              records.forEach((record) => {
+                record.auto = !!state.autoRecordsById[record.id];
+              });
+              nextRecords[domain] = records;
+            } else {
+              failedDomains.push(domain);
+              nextRecords[domain] = previousRecords[domain] || [];
+            }
           });
+          if (failedDomains.length) {
+            showToast(`Records partial refresh failed: ${failedDomains.join(", ")}`);
+          }
+          state.recordsByDomain = nextRecords;
           await refreshApiStats();
           state.lastRefresh = new Date().toISOString();
         } catch (err) {
@@ -1341,6 +1355,12 @@
 
         if (!state.trackedDomains.length) {
           state.trackedDomains = await loadTrackedDomains();
+        }
+
+        // Ensure cross-device consistency even when the tracked list was never initialized.
+        if (!state.trackedDomains.length && state.availableDomains.length) {
+          state.trackedDomains = state.availableDomains.slice();
+          await saveTrackedDomains(state.trackedDomains);
         }
 
         if (!state.domain && state.trackedDomains.length) {
