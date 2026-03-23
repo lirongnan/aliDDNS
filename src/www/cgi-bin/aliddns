@@ -46,6 +46,34 @@ set_uci_section() {
 	uci -q set "${CONFIG}.$1.$2=$3"
 }
 
+has_auto_sections() {
+	local sections
+	sections=$(list_auto_sections)
+	[ -n "$sections" ]
+}
+
+service_enabled() {
+	[ -x /etc/init.d/aliddns ] || return 1
+	/etc/init.d/aliddns enabled >/dev/null 2>&1
+}
+
+ensure_service_state() {
+	local should_enable="$1"
+	local service_action="$2"
+	[ -x /etc/init.d/aliddns ] || return 0
+	if [ "$should_enable" = "1" ] && ! service_enabled; then
+		/etc/init.d/aliddns enable >/dev/null 2>&1 || log_error "Failed to enable aliddns service"
+	fi
+	case "$service_action" in
+		restart)
+			/etc/init.d/aliddns restart >/dev/null 2>&1 || log_error "Failed to restart aliddns service"
+			;;
+		start)
+			/etc/init.d/aliddns start >/dev/null 2>&1 || log_error "Failed to start aliddns service"
+			;;
+	 esac
+}
+
 log_line() {
 	local level="$1"
 	local message="$2"
@@ -377,6 +405,7 @@ handle_auto_records_post() {
 	set_uci enabled 1
 	set_uci mode auto
 	uci -q commit "$CONFIG"
+	ensure_service_state 1 restart
 	log_info "Auto record saved: ${record_id} ${rr}.${domain}"
 	respond '{"ok":true}'
 }
@@ -392,6 +421,7 @@ handle_auto_record_delete() {
 	if [ -n "$section" ]; then
 		uci -q delete "${CONFIG}.${section}"
 		uci -q commit "$CONFIG"
+		ensure_service_state 1 restart
 		log_info "Auto record removed: ${record_id}"
 	fi
 	respond '{"ok":true}'
@@ -446,6 +476,9 @@ handle_settings_post() {
 		set_uci ttl "$ttl"
 	fi
 	uci -q commit "$CONFIG"
+	if [ "$(get_uci enabled || true)" = "1" ] || has_auto_sections; then
+		ensure_service_state 1 restart
+	fi
 	log_info "Settings updated"
 	respond '{"ok":true}'
 }

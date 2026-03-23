@@ -1,7 +1,7 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=aliDDNS
-PKG_RELEASE:=7
+PKG_RELEASE:=8
 
 include $(INCLUDE_DIR)/package.mk
 
@@ -28,6 +28,8 @@ define Package/aliDDNS/install
 	$(INSTALL_CONF) ./src/etc/config/aliddns $(1)/etc/config/aliddns
 	$(INSTALL_DIR) $(1)/etc/init.d
 	$(INSTALL_BIN) ./src/etc/init.d/aliddns $(1)/etc/init.d/aliddns
+	$(INSTALL_DIR) $(1)/etc/hotplug.d/iface
+	$(INSTALL_BIN) ./src/etc/hotplug.d/iface/95-aliddns $(1)/etc/hotplug.d/iface/95-aliddns
 	$(INSTALL_DIR) $(1)/usr/bin
 	$(INSTALL_BIN) ./src/usr/bin/aliddns.sh $(1)/usr/bin/aliddns.sh
 	$(INSTALL_DIR) $(1)/www/cgi-bin
@@ -43,3 +45,6 @@ define Package/aliDDNS/install
 endef
 
 $(eval $(call BuildPackage,aliDDNS))
+
+
+ 

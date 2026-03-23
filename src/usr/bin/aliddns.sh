@@ -78,6 +78,10 @@ load_config() {
 	AUTO_INTERVAL=${AUTO_INTERVAL:-$INTERVAL}
 }
 
+get_primary_interface() {
+	printf '%s' "$IP_SOURCE"
+}
+
 require_auth() {
 	if [ -z "$ACCESS_KEY_ID" ] || [ -z "$ACCESS_KEY_SECRET" ] || [ -z "$DOMAIN" ]; then
 		log_error "Missing required configuration: access_key_id, access_key_secret, domain."
@@ -373,7 +377,39 @@ run_auto() {
 
 run_once() {
 	load_config
-	run_sync
+	case "${MODE:-sync}" in
+		list)
+			run_list_daemon
+			;;
+		auto)
+			run_auto
+			;;
+		sync|update|"")
+			run_sync
+			;;
+		*)
+			log_error "Unknown mode: ${MODE}"
+			return 1
+			;;
+	 esac
+}
+
+run_trigger() {
+	load_config
+	local trigger_interface trigger_reason expected_interface
+	trigger_interface="${2:-}"
+	trigger_reason="${1:-manual}"
+	expected_interface=$(get_primary_interface)
+	if [ "$ENABLED" != "1" ]; then
+		log_info "Ignoring trigger ${trigger_reason}: service disabled"
+		return 0
+	fi
+	if [ -n "$trigger_interface" ] && [ -n "$expected_interface" ] && [ "$trigger_interface" != "$expected_interface" ]; then
+		log_info "Ignoring trigger ${trigger_reason}: interface ${trigger_interface} does not match ${expected_interface}"
+		return 0
+	fi
+	log_info "Handling trigger ${trigger_reason} for mode ${MODE:-sync}"
+	run_once
 }
 
 run_daemon() {
@@ -426,8 +462,11 @@ case "${1:-}" in
 		load_config
 		run_delete
 		;;
+	--trigger)
+		run_trigger "${2:-manual}" "${3:-}"
+		;;
 	*)
-		echo "Usage: $0 [--once|--daemon|--list|--add|--update|--delete]" >&2
+		echo "Usage: $0 [--once|--daemon|--list|--add|--update|--delete|--trigger <reason> [interface]]" >&2
 		exit 1
 		;;
 

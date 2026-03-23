@@ -10,6 +10,7 @@
 - 支持解析记录增删改查
 - 支持从 OpenWrt 接口读取当前 IP
 - 支持自动同步路由公网 IP（A/AAAA）
+- 支持在开机和接口地址变化时即时同步公网 IP
 - 统计 Aliyun API 访问频率（每小时次数）
 
 ## 目录结构
@@ -18,6 +19,7 @@
 Makefile
 src/
   etc/config/aliddns
+  etc/hotplug.d/iface/95-aliddns
   etc/init.d/aliddns
   usr/bin/aliddns.sh
 ```
@@ -87,6 +89,12 @@ config aliddns 'main'
 /usr/bin/aliddns.sh --once
 ```
 
+按事件触发一次同步：
+
+```
+/usr/bin/aliddns.sh --trigger manual wan
+```
+
 定时获取解析记录（后台服务）：
 
 1. 配置 `/etc/config/aliddns`：
@@ -116,6 +124,8 @@ option mode 'list'
 - `--add`/`--update` 使用 `value` 作为记录值
 - `--update`/`--delete` 优先使用 `record_id`，为空时按 `rr`/`type` 匹配第一条记录
 - `mode=auto` 会按 `auto_interval` 周期同步路由公网 IP 到已配置的自动记录
+- `--once` 会根据当前 `mode` 执行一次对应动作；`mode=auto` 时会立即同步所有自动映射记录
+- 安装后的 hotplug 脚本会在 `ifup`/`ifupdate` 时立即触发同步，不必等待下一次轮询
 
 ## 升级
 
@@ -152,6 +162,7 @@ UI 期望的 API 端点（示例）：
 - 只有在 UI 中添加域名后，才会显示该域名的解析记录列表。
 - UI 的 AccessKey、刷新间隔、默认 TTL 等配置通过 `settings` 接口保存在路由器（UCI）。
 - UI 支持为 A/AAAA 记录启用“自动获取路由公网 IP”模式，后台会按 `auto_interval` 自动同步。
+- 保存自动映射条目后，后端会自动启用并重启 `aliddns` 服务，使配置在重启后继续生效。
 - UI 顶部显示 API 每小时访问次数，双击数字可清零重新统计。
 - 需确保 uhttpd 启用 CGI（默认 `/cgi-bin` 前缀）。
 
