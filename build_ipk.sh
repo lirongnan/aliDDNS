@@ -66,25 +66,25 @@ EOF
 printf '2.0\n' > "$STAGE_DIR/debian-binary"
 
 (
-	cd "$CONTROL_DIR"
 	tar \
 		--format=ustar \
 		--numeric-owner \
 		--owner=0 \
 		--group=0 \
+		-C "$CONTROL_DIR" \
 		-czf "$STAGE_DIR/control.tar.gz" \
-		./control ./conffiles
+		control conffiles
 )
 
 (
-	cd "$DATA_DIR"
 	tar \
 		--format=ustar \
 		--numeric-owner \
 		--owner=0 \
 		--group=0 \
+		-C "$DATA_DIR" \
 		-czf "$STAGE_DIR/data.tar.gz" \
-		.
+		etc usr www
 )
 
 IPK_PATH="$OUTPUT_DIR/${PKG_NAME}_${PKG_VERSION}_${PKG_ARCH}.ipk"
